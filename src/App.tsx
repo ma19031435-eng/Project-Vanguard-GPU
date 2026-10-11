@@ -13,6 +13,7 @@ import { WeaponSystem, WeaponType, WEAPON_DEFINITIONS } from './engine/weapons/W
 import { P2PNetworkEngine, PlayerNetState, NetworkStatus, RemotePlayerRecord, PlayerInputPacket } from './engine/netcode/P2PNetworkEngine.ts';
 import { BotSimulation, SmartBotEntity, BotDifficulty } from './engine/netcode/BotSimulation.ts';
 import { HumanOperatorBuilder, HumanSkeleton } from './engine/graphics/HumanOperatorMesh.ts';
+import { CinematicPipeline } from './engine/graphics/PostProcessing.ts';
 import { TacticalHUD, FloatingDamageNumber, KillFeedItem } from './components/HUD/TacticalHUD.tsx';
 import { SettingsModal } from './components/Modals/SettingsModal.tsx';
 import { LobbyModal } from './components/Modals/LobbyModal.tsx';
@@ -130,6 +131,7 @@ export default function App() {
     scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
+    pipeline: CinematicPipeline;
     qualityManager: GraphicsQualityManager;
     wasmCore: WasmPhysicsCore;
     audioEngine: SpatialAudioEngine;
@@ -394,10 +396,9 @@ export default function App() {
 
     // 1. Real Earth Sunny Atmosphere (Outpost Mirage under bright blue skies)
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x6ba4d9); // Bright sunny Earth sky
-    scene.fog = new THREE.FogExp2(0xc0d8ee, 0.0055); // Earth horizon atmospheric haze
+    scene.fog = new THREE.FogExp2(0xd9cdb8, 0.0032); // Warm desert haze (sky dome supplies the background)
 
-    const camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.05, 500);
+    const camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.05, 3000);
     camera.rotation.order = 'YXZ'; // Strictly 'YXZ' to prevent any camera / crosshair roll tilt!
     camera.position.set(0, WasmPhysicsCore.EYE_HEIGHT_STAND, 28);
     scene.add(camera); // Essential for camera children (viewmodels & arms) to render in Three.js!
@@ -405,12 +406,15 @@ export default function App() {
     // 2. High-Performance Renderer with ACES Filmic Tone Mapping
     const renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
-      powerPreference: 'high-performance'
+      antialias: false, // SMAA in the post stack
+      powerPreference: 'high-performance',
+      logarithmicDepthBuffer: false
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.3;
+    renderer.toneMappingExposure = 1.15;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     // 3. Quality & Pipeline Manager
     const qualityManager = new GraphicsQualityManager(currentPreset);
@@ -425,22 +429,27 @@ export default function App() {
     }, 250);
 
     // 4. Real Earth Midday Sunlight + Warm Sky Reflections
-    const skyLight = new THREE.HemisphereLight(0x7fb2e6, 0xb09e80, 1.4);
+    const skyLight = new THREE.HemisphereLight(0x8fb8e8, 0xa08a66, 0.9);
     scene.add(skyLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfffaea, 3.2);
-    sunLight.position.set(55, 85, 45);
+    const sunLight = new THREE.DirectionalLight(0xfff1d6, 3.6);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 4096;
-    sunLight.shadow.mapSize.height = 4096;
+    sunLight.shadow.mapSize.width = 8192;
+    sunLight.shadow.mapSize.height = 8192;
     sunLight.shadow.camera.near = 10;
-    sunLight.shadow.camera.far = 180;
-    sunLight.shadow.camera.left = -70;
-    sunLight.shadow.camera.right = 70;
-    sunLight.shadow.camera.top = 70;
-    sunLight.shadow.camera.bottom = -70;
-    sunLight.shadow.bias = -0.0001;
+    sunLight.shadow.camera.far = 320;
+    sunLight.shadow.camera.left = -75;
+    sunLight.shadow.camera.right = 75;
+    sunLight.shadow.camera.top = 75;
+    sunLight.shadow.camera.bottom = -75;
+    sunLight.shadow.bias = -0.00012;
+    sunLight.shadow.normalBias = 0.02;
+    sunLight.shadow.radius = 3;
     scene.add(sunLight);
+    scene.add(sunLight.target);
+
+    // Cinematic post stack + physical sky + PMREM environment reflections
+    const pipeline = new CinematicPipeline(renderer, scene, camera, sunLight);
 
     // 5. WASM Physics Engine
     const wasmCore = new WasmPhysicsCore();
@@ -550,6 +559,7 @@ export default function App() {
       scene,
       camera,
       renderer,
+      pipeline,
       qualityManager,
       wasmCore,
       audioEngine,
@@ -608,6 +618,7 @@ export default function App() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      pipeline.setSize(window.innerWidth, window.innerHeight);
     };
     window.addEventListener('resize', handleResize);
 
@@ -632,9 +643,8 @@ export default function App() {
       // Rotate hazard lights
       const tSec = time * 0.001;
       engine.mapGen.dynamicLights.forEach((light, i) => {
-        if (i === 0) {
-          light.intensity = 3.6 + Math.sin(tSec * 4) * 0.8;
-        }
+        const base = (light.userData.baseIntensity ??= light.intensity);
+        light.intensity = base * (0.8 + 0.2 * Math.sin(tSec * 2.4 + i * 1.3));
       });
 
       // Update debris shards and shell casings
@@ -915,7 +925,7 @@ export default function App() {
       }
 
       (particleMat.uniforms.uTime as any).value = tSec;
-      renderer.render(scene, camera);
+      engine.pipeline.render(dt, time);
 
       setPlayerPos([camera.position.x, camera.position.y, camera.position.z]);
       setPlayerYaw(engine.yaw);
@@ -927,6 +937,7 @@ export default function App() {
       window.clearInterval(gpuStatusTimer);
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
+      pipeline.dispose();
       renderer.dispose();
       p2pNet.destroy();
     };

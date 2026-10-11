@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import { BoundingBox3D } from '../wasm/WasmPhysicsCore.ts';
 import { ProceduralTextureGenerator } from './MaterialsAndTextures.ts';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { EnvironmentDetailer } from './EnvironmentDetailer.ts';
 
 export interface DestructibleObject {
   id: string;
@@ -116,8 +118,13 @@ export class MapGenerator {
 
     // 1. Earth Desert Military Outpost Ground (120x120m)
     const floorGeo = new THREE.PlaneGeometry(120, 120);
+    [groundTextures.map, groundTextures.normalMap, groundTextures.roughnessMap, groundTextures.metalnessMap, groundTextures.aoMap].forEach(t => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(14, 14);
+    });
     const floorMat = new THREE.MeshStandardMaterial({
       map: groundTextures.map,
+      normalScale: new THREE.Vector2(1.4, 1.4),
       normalMap: groundTextures.normalMap,
       roughnessMap: groundTextures.roughnessMap,
       metalnessMap: groundTextures.metalnessMap,
@@ -131,6 +138,10 @@ export class MapGenerator {
     this.scene.add(floorMesh);
 
     // 2. Concrete Blast Walls
+    [wallTextures.map, wallTextures.normalMap, wallTextures.roughnessMap, wallTextures.metalnessMap, wallTextures.aoMap].forEach(t => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(10, 1.2);
+    });
     const wallMat = new THREE.MeshStandardMaterial({
       map: wallTextures.map,
       normalMap: wallTextures.normalMap,
@@ -152,18 +163,22 @@ export class MapGenerator {
     ];
 
     wallConfigs.forEach(wc => {
-      const wallGeo = new THREE.PlaneGeometry(wc.w, wallHeight);
+      const thick = 2.0;
+      const wallGeo = new RoundedBoxGeometry(wc.w, wallHeight, thick, 3, 0.12);
       const wall = new THREE.Mesh(wallGeo, wallMat);
       wall.position.set(wc.x, wallHeight / 2, wc.z);
       wall.rotation.y = wc.rotY;
+      // Push the wall outward so its inner face sits on the arena boundary
+      wall.translateZ(-thick / 2);
+      wall.castShadow = true;
       wall.receiveShadow = true;
       this.scene.add(wall);
 
-      const thick = 2.0;
-      let minX = wc.x - (wc.rotY === 0 || wc.rotY === Math.PI ? wc.w / 2 : thick / 2);
-      let maxX = wc.x + (wc.rotY === 0 || wc.rotY === Math.PI ? wc.w / 2 : thick / 2);
-      let minZ = wc.z - (wc.rotY === 0 || wc.rotY === Math.PI ? thick / 2 : wc.w / 2);
-      let maxZ = wc.z + (wc.rotY === 0 || wc.rotY === Math.PI ? thick / 2 : wc.w / 2);
+      const horizontal = wc.rotY === 0 || wc.rotY === Math.PI;
+      const minX = wc.x - (horizontal ? wc.w / 2 : thick / 2);
+      const maxX = wc.x + (horizontal ? wc.w / 2 : thick / 2);
+      const minZ = wc.z - (horizontal ? thick / 2 : wc.w / 2);
+      const maxZ = wc.z + (horizontal ? thick / 2 : wc.w / 2);
 
       this.worldCollisionBoxes.push({
         minX, minY: 0, minZ,
@@ -176,7 +191,7 @@ export class MapGenerator {
     const steelMat = new THREE.MeshStandardMaterial({ color: 0x3d434a, roughness: 0.45, metalness: 0.75 });
 
     // Fortified concrete bunker base (10x10m, 4m high)
-    const bunkerGeo = new THREE.BoxGeometry(10, 4.0, 10);
+    const bunkerGeo = new RoundedBoxGeometry(10, 4.0, 10, 4, 0.15);
     const bunker = new THREE.Mesh(bunkerGeo, bunkerMat);
     bunker.position.set(0, 2.0, 0);
     bunker.castShadow = true;
@@ -184,7 +199,7 @@ export class MapGenerator {
     this.scene.add(bunker);
 
     // Watchtower Upper Cabin
-    const cabinGeo = new THREE.BoxGeometry(6, 3.0, 6);
+    const cabinGeo = new RoundedBoxGeometry(6, 3.0, 6, 3, 0.1);
     const cabin = new THREE.Mesh(cabinGeo, steelMat);
     cabin.position.set(0, 5.5, 0);
     cabin.castShadow = true;
@@ -234,10 +249,15 @@ export class MapGenerator {
 
     containerLocations.forEach((loc, index) => {
       this.createDestructibleCrate(`container_${index}`, loc.x, loc.sy / 2, loc.z, loc.sx, loc.sy, loc.sz, loc.mat);
+      this.decorateContainer(loc.x, loc.sy / 2, loc.z, loc.sx, loc.sy, loc.sz);
     });
 
     // 6. Movement Course: slide gates, flank platforms, approach ramps & tactical cover
     this.buildMovementCourse();
+
+    // 7. High-detail environment layer (props, railings, terrain, decals, signage)
+    const detailer = new EnvironmentDetailer(this.scene, this.worldCollisionBoxes);
+    detailer.build();
 
     const spawnPoints: [number, number, number][] = [
       [0, 0, -38],
@@ -289,7 +309,7 @@ export class MapGenerator {
       for (const side of [-1, 1]) {
         const px = g.alongX ? g.x + side * half : g.x;
         const pz = g.alongX ? g.z : g.z + side * half;
-        const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.6, 0.45), supportMat);
+        const pillar = new THREE.Mesh(new RoundedBoxGeometry(0.45, 2.6, 0.45, 2, 0.05), supportMat);
         pillar.position.set(px, 1.3, pz);
         pillar.castShadow = true;
         pillar.receiveShadow = true;
@@ -351,7 +371,7 @@ export class MapGenerator {
     ];
     corners.forEach(c => {
       const w = 9, d = 9, h = 3.2;
-      const plat = new THREE.Mesh(new THREE.BoxGeometry(w, 0.5, d), platformMat);
+      const plat = new THREE.Mesh(new RoundedBoxGeometry(w, 0.5, d, 2, 0.06), platformMat);
       plat.position.set(c.x, h, c.z);
       plat.castShadow = true;
       plat.receiveShadow = true;
@@ -415,6 +435,11 @@ export class MapGenerator {
       const geo = alongX ? new THREE.BoxGeometry(w, h, d) : new THREE.BoxGeometry(d, h, w);
       const m = new THREE.Mesh(geo, coverMat);
       m.position.set(cv.x, h / 2, cv.z);
+      // Bevelled cap on top of each cover block
+      const cap = new THREE.Mesh(new RoundedBoxGeometry(alongX ? w + 0.1 : d + 0.1, 0.12, alongX ? d + 0.1 : w + 0.1, 2, 0.04), coverMat);
+      cap.position.set(cv.x, h + 0.06, cv.z);
+      cap.castShadow = true;
+      this.scene.add(cap);
       m.castShadow = true;
       m.receiveShadow = true;
       this.scene.add(m);
@@ -436,8 +461,56 @@ export class MapGenerator {
     }
   }
 
+  /** Corrugation ribs, corner castings, locking bars and a door seam for shipping containers. */
+  private decorateContainer(x: number, y: number, z: number, w: number, h: number, d: number): void {
+    const g = new THREE.Group();
+    const ribMat = new THREE.MeshStandardMaterial({ color: 0x1f2226, roughness: 0.6, metalness: 0.7 });
+    const castMat = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.5, metalness: 0.85 });
+    // Vertical corrugation ribs on long faces
+    const longAlongX = w >= d;
+    const faceLen = longAlongX ? w : d;
+    const ribCount = Math.floor(faceLen / 0.3);
+    for (let i = 0; i <= ribCount; i++) {
+      const t = -faceLen / 2 + (i / ribCount) * faceLen;
+      for (const side of [-1, 1]) {
+        const rib = new THREE.Mesh(new THREE.BoxGeometry(longAlongX ? 0.06 : 0.04, h - 0.2, longAlongX ? 0.04 : 0.06), ribMat);
+        rib.position.set(longAlongX ? t : side * (w / 2 + 0.02), 0, longAlongX ? side * (d / 2 + 0.02) : t);
+        g.add(rib);
+      }
+    }
+    // Corner castings
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+      const c = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.22), castMat);
+      c.position.set(sx * (w / 2 - 0.1), sy * (h / 2 - 0.1), sz * (d / 2 - 0.1));
+      g.add(c);
+    }
+    // Door end: locking bars + handles
+    const doorAlongX = !longAlongX;
+    for (let i = -1; i <= 1; i += 2) for (let k = 0; k < 2; k++) {
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, h - 0.3, 8), castMat);
+      const off = i * (0.35 + k * 0.5);
+      bar.position.set(doorAlongX ? off : w / 2 + 0.05, 0, doorAlongX ? d / 2 + 0.05 : off);
+      g.add(bar);
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(doorAlongX ? 0.25 : 0.06, 0.05, doorAlongX ? 0.06 : 0.25), castMat);
+      handle.position.set(doorAlongX ? off + 0.12 : w / 2 + 0.08, -0.2, doorAlongX ? d / 2 + 0.08 : off + 0.12);
+      g.add(handle);
+    }
+    // Roof vents
+    for (const sx of [-0.3, 0.3]) {
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.08, 0.4), castMat);
+      vent.position.set(sx * w, h / 2 + 0.04, 0);
+      g.add(vent);
+    }
+    g.traverse(o => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    g.position.set(x, y, z);
+    this.scene.add(g);
+    // Keep decoration tied to the crate so it disappears when destroyed
+    const crate = Array.from(this.destructibles.values()).pop();
+    if (crate) crate.mesh.userData.decor = g;
+  }
+
   private buildCatwalk(x: number, y: number, z: number, w: number, d: number): void {
-    const geo = new THREE.BoxGeometry(w, 0.45, d);
+    const geo = new RoundedBoxGeometry(w, 0.45, d, 2, 0.05);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x3d434a,
       roughness: 0.5,
@@ -456,7 +529,7 @@ export class MapGenerator {
   }
 
   private buildRamp(x: number, y: number, z: number, w: number, d: number, rotX: number): void {
-    const geo = new THREE.BoxGeometry(w, 0.35, d);
+    const geo = new RoundedBoxGeometry(w, 0.35, d, 2, 0.05);
     const mat = new THREE.MeshStandardMaterial({ color: 0x474e57, roughness: 0.5, metalness: 0.55 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x, y, z);
@@ -564,6 +637,7 @@ export class MapGenerator {
   private shatterObject(item: DestructibleObject, impactPoint?: THREE.Vector3): void {
     item.isDestroyed = true;
     this.scene.remove(item.mesh);
+    if (item.mesh.userData.decor) this.scene.remove(item.mesh.userData.decor as THREE.Object3D);
 
     const idx = this.worldCollisionBoxes.indexOf(item.box);
     if (idx !== -1) {

@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { CharacterHatId } from '../shop/ShopSystem.ts';
 
 export interface HumanSkeleton {
@@ -43,29 +44,42 @@ export class HumanOperatorBuilder {
     const vestColor = isTerrorist ? 0x2b221a : 0x14181f; // T leather rig vs CT black Kevlar
     const gearColor = 0x111317;
 
-    const bduMat = new THREE.MeshStandardMaterial({
+    const bduMat = new THREE.MeshPhysicalMaterial({
       color: bduColor,
-      roughness: 0.75,
-      metalness: 0.1
+      roughness: 0.9,
+      metalness: 0.0,
+      sheen: 0.5,
+      sheenRoughness: 0.8,
+      sheenColor: new THREE.Color(isTerrorist ? 0x6b705c : 0x4a5568)
     });
 
-    const vestMat = new THREE.MeshStandardMaterial({
+    const vestMat = new THREE.MeshPhysicalMaterial({
       color: vestColor,
-      roughness: 0.65,
-      metalness: 0.2
+      roughness: 0.8,
+      metalness: 0.05,
+      sheen: 0.35,
+      sheenColor: new THREE.Color(0x4a4036)
     });
 
-    const helmetMat = new THREE.MeshStandardMaterial({
+    const helmetMat = new THREE.MeshPhysicalMaterial({
       color: isTerrorist ? 0x282e25 : 0x222a36,
-      roughness: 0.45,
-      metalness: 0.4
+      roughness: 0.55,
+      metalness: 0.2,
+      clearcoat: 0.4,
+      clearcoatRoughness: 0.5
     });
 
-    const lensMat = new THREE.MeshStandardMaterial({
-      color: 0x050505,
-      roughness: 0.1,
-      metalness: 0.95
+    const lensMat = new THREE.MeshPhysicalMaterial({
+      color: 0x0a1a24,
+      roughness: 0.05,
+      metalness: 0.2,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05,
+      emissive: 0x0b3a4a,
+      emissiveIntensity: 0.35
     });
+    const strapMat = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.95 });
+    const padMat = new THREE.MeshStandardMaterial({ color: 0x1b1d20, roughness: 0.85, metalness: 0.05 });
 
     const skinMat = new THREE.MeshStandardMaterial({
       color: 0x9e7456,
@@ -85,12 +99,12 @@ export class HumanOperatorBuilder {
     root.add(pelvis);
 
     // 2. Torso & Kevlar Plate Carrier
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.45, 0.24), bduMat);
+    const torso = new THREE.Mesh(new RoundedBoxGeometry(0.38, 0.45, 0.24, 4, 0.07), bduMat);
     torso.position.set(0, 0.22, 0);
     torso.castShadow = true;
     pelvis.add(torso);
 
-    const vest = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.38, 0.28), vestMat);
+    const vest = new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.38, 0.28, 4, 0.06), vestMat);
     vest.position.set(0, 0.2, 0);
     vest.castShadow = true;
     pelvis.add(vest);
@@ -98,12 +112,40 @@ export class HumanOperatorBuilder {
     // Ammo Mag Pouches on Chest Rig
     const pouches: THREE.Mesh[] = [];
     for (let p = -1; p <= 1; p++) {
-      const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.06), vestMat);
+      const pouch = new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.14, 0.06, 2, 0.015), vestMat);
       pouch.position.set(p * 0.11, 0.16, 0.16);
       pouch.castShadow = true;
       pelvis.add(pouch);
       pouches.push(pouch);
     }
+
+    // Shoulder straps, belt, radio, shoulder & knee pads, helmet rail + NVG mount
+    for (const side of [-1, 1]) {
+      const strap = new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.34, 0.3, 2, 0.015), strapMat);
+      strap.position.set(side * 0.12, 0.28, 0);
+      strap.rotation.x = 0.05;
+      pelvis.add(strap);
+      const shoulderPad = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2), padMat);
+      shoulderPad.position.set(side * 0.235, 0.41, 0);
+      shoulderPad.castShadow = true;
+      pelvis.add(shoulderPad);
+    }
+    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 20, 1, true), strapMat);
+    belt.position.set(0, 0.0, 0);
+    belt.scale.z = 0.7;
+    pelvis.add(belt);
+    const radio = new THREE.Mesh(new RoundedBoxGeometry(0.05, 0.12, 0.04, 2, 0.01), padMat);
+    radio.position.set(-0.17, 0.3, 0.1);
+    pelvis.add(radio);
+    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.18, 6), padMat);
+    antenna.position.set(-0.17, 0.45, 0.1);
+    pelvis.add(antenna);
+    const backPlate = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.3, 0.08, 3, 0.03), vestMat);
+    backPlate.position.set(0, 0.22, -0.16);
+    pelvis.add(backPlate);
+    const canteen = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.14, 14), padMat);
+    canteen.position.set(0.17, -0.04, -0.12);
+    pelvis.add(canteen);
 
     // 3. Head & Tactical Helmet / Balaclava
     const head = new THREE.Group();
@@ -111,21 +153,36 @@ export class HumanOperatorBuilder {
     pelvis.add(head);
 
     // Head base (balaclava)
-    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), bduMat);
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.13, 24, 24), bduMat);
     headMesh.castShadow = true;
     head.add(headMesh);
 
     // Ballistic Helmet with NVG Mount
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.145, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.65), helmetMat);
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.145, 28, 20, 0, Math.PI * 2, 0, Math.PI * 0.65), helmetMat);
     helmet.rotation.x = -0.15;
     helmet.position.set(0, 0.03, -0.01);
     helmet.castShadow = true;
     head.add(helmet);
 
     // Tactical Goggles / Visor
-    const goggles = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.08), lensMat);
+    const goggles = new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.06, 0.08, 3, 0.02), lensMat);
     goggles.position.set(0, 0.02, 0.12);
     head.add(goggles);
+
+    // Helmet side rail, NVG shroud & chin strap
+    for (const side of [-1, 1]) {
+      const rail = new THREE.Mesh(new RoundedBoxGeometry(0.02, 0.03, 0.14, 2, 0.006), padMat);
+      rail.position.set(side * 0.14, 0.03, -0.01);
+      head.add(rail);
+    }
+    const shroud = new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.05, 0.03, 2, 0.008), padMat);
+    shroud.position.set(0, 0.1, 0.12);
+    head.add(shroud);
+    const chin = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.008, 6, 20, Math.PI), strapMat);
+    chin.rotation.z = Math.PI;
+    chin.rotation.y = Math.PI / 2;
+    chin.position.set(0, -0.02, 0);
+    head.add(chin);
 
     // Dynamic Cosmetics / Hat Mount Group
     const hatGroup = new THREE.Group();
@@ -138,7 +195,7 @@ export class HumanOperatorBuilder {
     armL.position.set(-0.24, 0.38, 0);
     pelvis.add(armL);
 
-    const upperArmL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.28, 8), bduMat);
+    const upperArmL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.28, 16), bduMat);
     upperArmL.position.set(0, -0.14, 0);
     upperArmL.castShadow = true;
     armL.add(upperArmL);
@@ -147,12 +204,12 @@ export class HumanOperatorBuilder {
     forearmL.position.set(0, -0.28, 0);
     armL.add(forearmL);
 
-    const lowerArmL = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.048, 0.26, 8), bduMat);
+    const lowerArmL = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.048, 0.26, 16), bduMat);
     lowerArmL.position.set(0, -0.13, 0);
     lowerArmL.castShadow = true;
     forearmL.add(lowerArmL);
 
-    const handL = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.07), gloveMat);
+    const handL = new THREE.Mesh(new RoundedBoxGeometry(0.07, 0.08, 0.07, 2, 0.02), gloveMat);
     handL.position.set(0, -0.28, 0);
     forearmL.add(handL);
 
@@ -161,7 +218,7 @@ export class HumanOperatorBuilder {
     armR.position.set(0.24, 0.38, 0);
     pelvis.add(armR);
 
-    const upperArmR = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.28, 8), bduMat);
+    const upperArmR = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.28, 16), bduMat);
     upperArmR.position.set(0, -0.14, 0);
     upperArmR.castShadow = true;
     armR.add(upperArmR);
@@ -170,12 +227,12 @@ export class HumanOperatorBuilder {
     forearmR.position.set(0, -0.28, 0);
     armR.add(forearmR);
 
-    const lowerArmR = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.048, 0.26, 8), bduMat);
+    const lowerArmR = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.048, 0.26, 16), bduMat);
     lowerArmR.position.set(0, -0.13, 0);
     lowerArmR.castShadow = true;
     forearmR.add(lowerArmR);
 
-    const handR = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.07), gloveMat);
+    const handR = new THREE.Mesh(new RoundedBoxGeometry(0.07, 0.08, 0.07, 2, 0.02), gloveMat);
     handR.position.set(0, -0.28, 0);
     forearmR.add(handR);
 
@@ -217,7 +274,7 @@ export class HumanOperatorBuilder {
     legL.position.set(-0.14, 0, 0);
     pelvis.add(legL);
 
-    const thighL = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.065, 0.42, 8), bduMat);
+    const thighL = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.065, 0.42, 16), bduMat);
     thighL.position.set(0, -0.21, 0);
     thighL.castShadow = true;
     legL.add(thighL);
@@ -226,12 +283,17 @@ export class HumanOperatorBuilder {
     shinL.position.set(0, -0.42, 0);
     legL.add(shinL);
 
-    const calfL = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.055, 0.42, 8), bduMat);
+    const calfL = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.055, 0.42, 16), bduMat);
     calfL.position.set(0, -0.21, 0);
     calfL.castShadow = true;
     shinL.add(calfL);
 
-    const bootL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.22), gearColor ? gloveMat : bduMat);
+    const kneeL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), padMat);
+    kneeL.position.set(0, 0.0, 0.03);
+    kneeL.rotation.x = Math.PI / 2;
+    shinL.add(kneeL);
+
+    const bootL = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.1, 0.22, 2, 0.03), gloveMat);
     bootL.position.set(0, -0.42, 0.04);
     shinL.add(bootL);
 
@@ -240,7 +302,7 @@ export class HumanOperatorBuilder {
     legR.position.set(0.14, 0, 0);
     pelvis.add(legR);
 
-    const thighR = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.065, 0.42, 8), bduMat);
+    const thighR = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.065, 0.42, 16), bduMat);
     thighR.position.set(0, -0.21, 0);
     thighR.castShadow = true;
     legR.add(thighR);
@@ -249,12 +311,17 @@ export class HumanOperatorBuilder {
     shinR.position.set(0, -0.42, 0);
     legR.add(shinR);
 
-    const calfR = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.055, 0.42, 8), bduMat);
+    const calfR = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.055, 0.42, 16), bduMat);
     calfR.position.set(0, -0.21, 0);
     calfR.castShadow = true;
     shinR.add(calfR);
 
-    const bootR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.22), gloveMat);
+    const kneeR = new THREE.Mesh(new THREE.SphereGeometry(0.07, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), padMat);
+    kneeR.position.set(0, 0.0, 0.03);
+    kneeR.rotation.x = Math.PI / 2;
+    shinR.add(kneeR);
+
+    const bootR = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.1, 0.22, 2, 0.03), gloveMat);
     bootR.position.set(0, -0.42, 0.04);
     shinR.add(bootR);
 

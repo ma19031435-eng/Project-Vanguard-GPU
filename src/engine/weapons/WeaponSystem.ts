@@ -349,20 +349,31 @@ export class WeaponSystem {
    * Builds high-fidelity, distinct blocky indie 3D viewmodels
    */
   private buildIndieBlockyWeapons(): void {
-    const steelBaseMat = new THREE.MeshStandardMaterial({
-      color: 0x22262c,
-      metalness: 0.85,
-      roughness: 0.35
-    });
-    const woodMat = new THREE.MeshStandardMaterial({
-      color: 0x4a3222,
-      metalness: 0.1,
-      roughness: 0.55
-    });
-    const darkSteelMat = new THREE.MeshStandardMaterial({
-      color: 0x111316,
+    // Physically based gunmetal: anisotropic-feeling brushed steel with a thin clearcoat
+    const steelBaseMat = new THREE.MeshPhysicalMaterial({
+      color: 0x262b32,
       metalness: 0.9,
-      roughness: 0.3
+      roughness: 0.32,
+      clearcoat: 0.35,
+      clearcoatRoughness: 0.25,
+      envMapIntensity: 1.3
+    });
+    const woodMat = new THREE.MeshPhysicalMaterial({
+      color: 0x4a3222,
+      metalness: 0.0,
+      roughness: 0.45,
+      clearcoat: 0.6,
+      clearcoatRoughness: 0.35,
+      sheen: 0.2,
+      sheenColor: new THREE.Color(0x7a5a3a)
+    });
+    const darkSteelMat = new THREE.MeshPhysicalMaterial({
+      color: 0x111316,
+      metalness: 0.95,
+      roughness: 0.28,
+      clearcoat: 0.2,
+      clearcoatRoughness: 0.3,
+      envMapIntensity: 1.3
     });
 
     // 1. AK-47 Tactical (Assault Rifle with blocky receiver, curved banana mag, wood guard)
