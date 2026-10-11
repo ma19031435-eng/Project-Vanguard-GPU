@@ -630,11 +630,12 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
           </div>
         </div>
 
-        {/* 6-Slot Hotkey Arsenal Bar (Clickable / Quick switch) */}
-        <div className="grid grid-cols-6 gap-1 mb-2 pointer-events-auto">
-          {(['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg'] as WeaponType[]).map((wId, idx) => {
+        {/* 9-Slot Hotkey Arsenal Bar (Clickable / Quick switch) */}
+        <div className="grid grid-cols-9 gap-1 mb-2 pointer-events-auto">
+          {(['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg', 'smg', 'revolver', 'crossbow'] as WeaponType[]).map((wId, idx) => {
             const isCur = weapon === wId;
-            const shortName = idx === 0 ? 'AK' : idx === 1 ? 'AWP' : idx === 2 ? 'SPAS' : idx === 3 ? 'DEAGLE' : idx === 4 ? 'KATANA' : 'RPG';
+            const shortNames: Record<WeaponType, string> = { rifle: 'AK', railgun: 'AWP', shotgun: 'SPAS', pistol: 'DEAGLE', melee: 'BLADE', rpg: 'RPG', smg: 'SMG', revolver: 'REV', crossbow: 'BOW' };
+            const shortName = shortNames[wId];
             return (
               <button
                 key={wId}

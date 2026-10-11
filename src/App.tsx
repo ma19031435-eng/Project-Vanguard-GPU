@@ -106,6 +106,7 @@ export default function App() {
   const [activeParticles, setActiveParticles] = useState(150000);
   const [currentPreset, setCurrentPreset] = useState<GraphicsPreset>('ultra');
   const [isWebGPU, setIsWebGPU] = useState(false);
+  const webGPUCapable = typeof navigator !== 'undefined' && 'gpu' in navigator;
   const [mouseSens, setMouseSens] = useState(1.0);
   const [fov, setFov] = useState(85);
   const [masterVol, setMasterVol] = useState(0.85);
@@ -251,7 +252,12 @@ export default function App() {
       crouchProgress: 0,
       viewHeight: WasmPhysicsCore.EYE_HEIGHT_STAND,
       stamina: 0,
-      crouchFatigue: 0
+      crouchFatigue: 0,
+      isSliding: false,
+      slideTimer: 0,
+      slideCooldown: 0,
+      slideCancelStreak: 0,
+      cameraRoll: 0
     };
 
     engine.pitch = 0;
@@ -345,6 +351,13 @@ export default function App() {
     const qualityManager = new GraphicsQualityManager(currentPreset);
     qualityManager.attachRenderer(renderer);
     setIsWebGPU(qualityManager.isWebGPU());
+    // Device acquisition is asynchronous; reflect the mandated WebGPU capability as soon as it resolves.
+    const gpuStatusTimer = window.setInterval(() => {
+      if (qualityManager.isWebGPU()) {
+        setIsWebGPU(true);
+        window.clearInterval(gpuStatusTimer);
+      }
+    }, 250);
 
     // 4. Real Earth Midday Sunlight + Warm Sky Reflections
     const skyLight = new THREE.HemisphereLight(0x7fb2e6, 0xb09e80, 1.4);
@@ -451,7 +464,12 @@ export default function App() {
         crouchProgress: 0,
         viewHeight: WasmPhysicsCore.EYE_HEIGHT_STAND,
         stamina: 0,
-        crouchFatigue: 0
+        crouchFatigue: 0,
+        isSliding: false,
+        slideTimer: 0,
+        slideCooldown: 0,
+        slideCancelStreak: 0,
+        cameraRoll: 0
       },
       mouseDeltaX: 0,
       mouseDeltaY: 0,
@@ -737,6 +755,7 @@ export default function App() {
     animationFrameId = requestAnimationFrame(renderLoop);
 
     return () => {
+      window.clearInterval(gpuStatusTimer);
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
@@ -1172,6 +1191,15 @@ export default function App() {
       } else if (e.code === 'Digit6' && !engine.isDead) {
         engine.weaponSystem.switchWeapon('rpg');
         setCurrentWeapon('rpg');
+      } else if (e.code === 'Digit7' && !engine.isDead) {
+        engine.weaponSystem.switchWeapon('smg');
+        setCurrentWeapon('smg');
+      } else if (e.code === 'Digit8' && !engine.isDead) {
+        engine.weaponSystem.switchWeapon('revolver');
+        setCurrentWeapon('revolver');
+      } else if (e.code === 'Digit9' && !engine.isDead) {
+        engine.weaponSystem.switchWeapon('crossbow');
+        setCurrentWeapon('crossbow');
       } else if (e.code === 'KeyB' && !engine.isDead) {
         setShopOpen(true);
       }
@@ -1180,7 +1208,7 @@ export default function App() {
     const handleWheel = (e: WheelEvent) => {
       const engine = engineRef.current;
       if (!engine || engine.isDead) return;
-      const arsenal: WeaponType[] = ['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg'];
+      const arsenal: WeaponType[] = ['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg', 'smg', 'revolver', 'crossbow'];
       const curIdx = arsenal.indexOf(engine.weaponSystem.currentWeapon);
       const nextIdx = e.deltaY > 0 ? (curIdx + 1) % arsenal.length : (curIdx - 1 + arsenal.length) % arsenal.length;
       const nextW = arsenal[nextIdx];
@@ -1261,6 +1289,12 @@ export default function App() {
         className="w-full h-full block cursor-crosshair"
       />
 
+      {!webGPUCapable && (
+        <div className="absolute inset-x-0 top-0 z-[70] bg-red-950/95 border-b border-red-400 px-4 py-3 text-center text-xs text-red-100">
+          <b>WEBGPU REQUIRED:</b> This competitive build mandates a WebGPU-capable browser and GPU. Enable WebGPU or use a current Chromium-based browser.
+        </div>
+      )}
+
       {!isPointerLocked && !isPlayerDead && (
         <div 
           onClick={handleCanvasClick}
@@ -1275,7 +1309,7 @@ export default function App() {
             </div>
 
             <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
-              Roblox Rivals &amp; Krunker Indie Style &bull; 6 Weapon Arsenal &bull; Armory Shop &bull; Sentinel Anti-Cheat &bull; Togglable Bots.
+              Original arena FPS &bull; 9-weapon arsenal &bull; Momentum movement &bull; Armory &bull; Bots &bull; P2P matches.
             </p>
 
             <div className="py-3 px-6 bg-amber-500 hover:bg-amber-400 text-black font-black text-sm rounded-xl transition shadow-[0_0_20px_rgba(245,158,11,0.5)] mb-6 flex items-center justify-center gap-2 cursor-pointer">
@@ -1284,10 +1318,10 @@ export default function App() {
 
             <div className="grid grid-cols-2 gap-2 text-[11px] text-zinc-400 text-left border-t border-zinc-800 pt-4">
               <div><span className="text-amber-400 font-bold">[W, A, S, D]</span> Counter-Strafe / Bhop</div>
-              <div><span className="text-amber-400 font-bold">[1 - 6 / SCROLL]</span> 6 Weapons Arsenal</div>
+              <div><span className="text-amber-400 font-bold">[1 - 9 / SCROLL]</span> 9 Weapon Arsenal</div>
               <div><span className="text-amber-400 font-bold">[B]</span> Rivals Armory &amp; Skins Shop</div>
               <div><span className="text-amber-400 font-bold">[RIGHT CLICK]</span> AWP Optical Scope</div>
-              <div><span className="text-amber-400 font-bold">[C / CTRL]</span> Crouch Stance</div>
+              <div><span className="text-amber-400 font-bold">[C / CTRL]</span> Slide &bull; [SPACE] Slide-cancel</div>
               <div><span className="text-amber-400 font-bold">[LEFT CLICK]</span> Fire / Slash / Rocket</div>
               <div><span className="text-amber-400 font-bold">[SHIFT]</span> Silent Tactical Walk</div>
               <div><span className="text-amber-400 font-bold">[TAB]</span> Match Leaderboard</div>
