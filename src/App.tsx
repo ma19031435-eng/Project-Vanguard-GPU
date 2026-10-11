@@ -10,7 +10,7 @@ import { GraphicsQualityManager, GraphicsPreset, GLSL_PARTICLE_SHADERS } from '.
 import { SpatialAudioEngine } from './engine/audio/SpatialAudioEngine.ts';
 import { MapGenerator } from './engine/graphics/MapGenerator.ts';
 import { WeaponSystem, WeaponType, WEAPON_DEFINITIONS } from './engine/weapons/WeaponSystem.ts';
-import { P2PNetworkEngine, PlayerNetState } from './engine/netcode/P2PNetworkEngine.ts';
+import { P2PNetworkEngine, PlayerNetState, NetworkStatus, RemotePlayerRecord, PlayerInputPacket } from './engine/netcode/P2PNetworkEngine.ts';
 import { BotSimulation, SmartBotEntity, BotDifficulty } from './engine/netcode/BotSimulation.ts';
 import { HumanOperatorBuilder, HumanSkeleton } from './engine/graphics/HumanOperatorMesh.ts';
 import { TacticalHUD, FloatingDamageNumber, KillFeedItem } from './components/HUD/TacticalHUD.tsx';
@@ -52,6 +52,8 @@ export default function App() {
   const [activeHat, setActiveHat] = useState<CharacterHatId>(shopRef.current.equippedHat);
   const [shopOpen, setShopOpen] = useState(false);
   const [botsEnabled, setBotsEnabled] = useState(true);
+  const botsEnabledRef = useRef(true);
+  botsEnabledRef.current = botsEnabled;
   const [killStreak, setKillStreak] = useState(0);
   const [antiCheatStatus, setAntiCheatStatus] = useState('SECURED');
   const [antiCheatViolations, setAntiCheatViolations] = useState(0);
@@ -101,6 +103,11 @@ export default function App() {
   const [playerYaw, setPlayerYaw] = useState(0);
   const [currentSpeed, setCurrentSpeed] = useState(0);
   const [allPlayers, setAllPlayers] = useState<PlayerNetState[]>([]);
+  const [networkStatus, setNetworkStatus] = useState<NetworkStatus>('idle');
+  const [roomCode, setRoomCode] = useState('');
+  const [isHostSession, setIsHostSession] = useState(true);
+  const playerKillsRef = useRef(0);
+  const playerDeathsRef = useRef(0);
   const [chatMessages, setChatMessages] = useState<{ sender: string; text: string; time: number }[]>([
     { sender: 'OPERATION DUST', text: 'Welcome to Outpost Mirage. Authentic CS2 recoil and real firearms active.', time: Date.now() },
     { sender: 'VANGUARD-OS', text: 'Earn XP from eliminations, headshots, and combat actions to rank up.', time: Date.now() }
@@ -141,6 +148,8 @@ export default function App() {
     particleSizeArr: Float32Array;
     particleNextIdx: number;
     remoteSkeletons: Map<string, HumanSkeleton>;
+    remoteMoveStates: Map<string, CS2MovementState>;
+    remoteLastPos: Map<string, [number, number, number]>;
     bulletTracers: { line: THREE.Line; life: number; maxLife: number }[];
     cs2MoveState: CS2MovementState;
     mouseDeltaX: number;
@@ -215,9 +224,6 @@ export default function App() {
       const next = !prev;
       if (engineRef.current) {
         engineRef.current.botSim.enabled = next;
-        engineRef.current.remoteSkeletons.forEach(skel => {
-          skel.root.visible = next;
-        });
       }
       setChatMessages(prevChat => [...prevChat, {
         sender: 'VANGUARD KERNEL',
@@ -259,7 +265,6 @@ export default function App() {
     const engine = engineRef.current;
     if (!engine) return;
     engine.botSim.enabled = visible;
-    engine.remoteSkeletons.forEach(skel => { skel.root.visible = visible; });
   }, []);
 
   // Deploy from lobby into one of the three session types.
@@ -354,7 +359,7 @@ export default function App() {
     setIsPlayerDead(true);
     setPlayerHp(0);
     setKillerName(killer);
-    setPlayerDeaths(prev => prev + 1);
+    setPlayerDeaths(prev => { playerDeathsRef.current = prev + 1; return prev + 1; });
 
     engine.audioEngine.playHitmarker(true, true);
     setKillFeed(prev => [
@@ -451,7 +456,51 @@ export default function App() {
 
     // 9. P2P Host-Authoritative Netcode Engine
     const p2pNet = new P2PNetworkEngine();
-    p2pNet.hostRoom();
+    p2pNet.onStatusChange = (status, event) => {
+      setNetworkStatus(status);
+      setRoomCode(p2pNet.hostPeerId);
+      setIsHostSession(p2pNet.isHost);
+      setChatMessages(prev => [...prev.slice(-40), { sender: event.level === 'error' ? 'NETWORK ERROR' : 'VANGUARD NETWORK', text: event.text, time: Date.now() }]);
+    };
+    p2pNet.onPlayerLeft = (id) => {
+      const eng = engineRef.current;
+      if (!eng) return;
+      const skel = eng.remoteSkeletons.get(id);
+      if (skel) { eng.scene.remove(skel.root); eng.remoteSkeletons.delete(id); }
+      eng.remoteMoveStates.delete(id);
+      eng.remoteLastPos.delete(id);
+    };
+    // Host authoritative movement for remote peers: same physics step as the local player.
+    p2pNet.simulateRemoteInput = (record: RemotePlayerRecord, input: PlayerInputPacket) => {
+      const eng = engineRef.current;
+      if (!eng) return;
+      let ms = eng.remoteMoveStates.get(record.state.id);
+      if (!ms) {
+        ms = {
+          position: [...record.state.position] as [number, number, number],
+          velocity: [0, 0, 0], onGround: true, crouchProgress: 0,
+          viewHeight: WasmPhysicsCore.EYE_HEIGHT_STAND, stamina: 0, crouchFatigue: 0,
+          isSliding: false, slideTimer: 0, slideCooldown: 0, slideCancelStreak: 0, cameraRoll: 0
+        };
+        eng.remoteMoveStates.set(record.state.id, ms);
+      }
+      const fx = -Math.sin(input.yaw), fz = -Math.cos(input.yaw);
+      const rx = Math.cos(input.yaw), rz = -Math.sin(input.yaw);
+      let wx = fx * input.moveForward + rx * input.moveRight;
+      let wz = fz * input.moveForward + rz * input.moveRight;
+      const len = Math.hypot(wx, wz);
+      if (len > 0.001) { wx /= len; wz /= len; }
+      const wishSpeed = len > 0.001 ? (input.crouch ? WasmPhysicsCore.CROUCH_SPEED : WasmPhysicsCore.MAX_GROUND_SPEED) : 0;
+      const { nextState } = eng.wasmCore.stepCS2Movement(ms, [wx, 0, wz], wishSpeed, input.jump, input.crouch, input.dt, eng.mapGen.worldCollisionBoxes);
+      // Arena bounds clamp (never trust the client, never let anyone leave the map)
+      nextState.position[0] = Math.max(-49, Math.min(49, nextState.position[0]));
+      nextState.position[2] = Math.max(-49, Math.min(49, nextState.position[2]));
+      eng.remoteMoveStates.set(record.state.id, nextState);
+      record.state.position = [nextState.position[0], nextState.position[1], nextState.position[2]];
+      record.velocity = [nextState.velocity[0], nextState.velocity[1], nextState.velocity[2]];
+      record.onGround = nextState.onGround;
+    };
+    p2pNet.hostRoom().catch(() => { /* status surfaced via onStatusChange */ });
 
     // 10. Insanely Smart Bot Simulation Engine (idle until a deployment is selected)
     const botSim = new BotSimulation(botDifficultyRef.current);
@@ -516,6 +565,8 @@ export default function App() {
       particleSizeArr,
       particleNextIdx: 0,
       remoteSkeletons: new Map(),
+      remoteMoveStates: new Map(),
+      remoteLastPos: new Map(),
       bulletTracers: [],
       cs2MoveState: {
         position: [0, 0, 28],
@@ -772,12 +823,12 @@ export default function App() {
       // 17. Update / Render Human Operator Skeletal Animations
       updateHumanOperatorMeshes(engine, dt);
 
-      // 18. Broadcast World State
+      // 18. Networking: host broadcasts authoritative world state, clients stream inputs
       if (engine.p2pNet.isHost) {
         const combatants: PlayerNetState[] = [
           {
             id: 'local',
-            name: 'YOU [ESPORTS OPERATOR]',
+            name: 'YOU [HOST]',
             isHost: true,
             isBot: false,
             position: [camera.position.x, camera.position.y - nextState.viewHeight, camera.position.z],
@@ -785,24 +836,53 @@ export default function App() {
             pitch: engine.pitch,
             health: engine.playerHp,
             armor: engine.playerArmor,
-            kills: playerKills,
-            deaths: playerDeaths,
+            kills: playerKillsRef.current,
+            deaths: playerDeathsRef.current,
             ping: 0,
             currentWeapon: engine.weaponSystem.currentWeapon,
             isFiring: false,
             isCrouching,
             lastAcknowledgedTick: engine.p2pNet.currentTick
           },
-          ...engine.botSim.bots.map(b => b.state)
+          ...engine.p2pNet.getRemotePlayerStates(),
+          ...(engine.botSim.enabled ? engine.botSim.bots.map(b => b.state) : [])
         ];
 
         setAllPlayers(combatants);
+        engine.p2pNet.currentTick++;
         engine.p2pNet.broadcastSnapshot({
           tick: engine.p2pNet.currentTick,
           timestamp: time,
           players: combatants,
           events: []
         });
+      } else if (engine.p2pNet.isConnected) {
+        engine.p2pNet.sendInput({
+          moveForward: -wishZ,
+          moveRight: wishX,
+          jump: isJumping,
+          crouch: isCrouching,
+          pitch: engine.pitch,
+          yaw: engine.yaw,
+          fire: false,
+          weapon: engine.weaponSystem.currentWeapon,
+          dt
+        });
+
+        const interp = engine.p2pNet.updateEntityInterpolation();
+        const list: PlayerNetState[] = [];
+        interp.forEach(p => list.push(p));
+        setAllPlayers(list);
+
+        // Light reconciliation: snap if the host disagrees with our predicted position by a lot.
+        const self = interp.get(engine.p2pNet.localPeerId);
+        if (self) {
+          const dx = self.position[0] - nextState.position[0];
+          const dz = self.position[2] - nextState.position[2];
+          if (dx * dx + dz * dz > 2.5 * 2.5) {
+            engine.cs2MoveState = { ...engine.cs2MoveState, position: [self.position[0], self.position[1], self.position[2]] };
+          }
+        }
       }
 
       (particleMat.uniforms.uTime as any).value = tSec;
@@ -823,28 +903,49 @@ export default function App() {
     };
   }, [fov, triggerPlayerDeath]);
 
-  // Update Realistic Human CT/T Operators
+  // Update Realistic Human Operators (bots on host, plus every remote peer / host-side entity)
   const updateHumanOperatorMeshes = (engine: NonNullable<typeof engineRef.current>, dt: number) => {
-    engine.botSim.bots.forEach((bot, index) => {
-      let skel = engine.remoteSkeletons.get(bot.state.id);
+    const live = new Set<string>();
+
+    const upsert = (id: string, index: number, pos: [number, number, number], rotY: number, pitch: number, crouch: boolean, dead: boolean, vel: THREE.Vector3, visible: boolean) => {
+      live.add(id);
+      let skel = engine.remoteSkeletons.get(id);
       if (!skel) {
         skel = HumanOperatorBuilder.createOperator(index % 2 === 1);
-        skel.root.visible = engine.botSim.enabled;
         engine.scene.add(skel.root);
-        engine.remoteSkeletons.set(bot.state.id, skel);
+        engine.remoteSkeletons.set(id, skel);
       }
+      skel.root.visible = visible;
+      skel.root.position.set(pos[0], pos[1], pos[2]);
+      skel.root.rotation.y = rotY;
+      HumanOperatorBuilder.updateAnimation(skel, dt, vel, crouch, pitch, dead);
+    };
 
-      skel.root.position.set(bot.state.position[0], bot.state.position[1], bot.state.position[2]);
-      skel.root.rotation.y = bot.state.rotationY;
+    // Bots (simulated locally on host)
+    engine.botSim.bots.forEach((bot, index) => {
+      upsert(bot.state.id, index, bot.state.position, bot.state.rotationY, bot.state.pitch, bot.state.isCrouching, bot.state.health <= 0, bot.currentVelocity, engine.botSim.enabled);
+    });
 
-      HumanOperatorBuilder.updateAnimation(
-        skel,
-        dt,
-        bot.currentVelocity,
-        bot.state.isCrouching,
-        bot.state.pitch,
-        bot.state.health <= 0
-      );
+    // Remote humans: host renders connected peers; clients render everyone in the snapshot except themselves.
+    const remote: PlayerNetState[] = engine.p2pNet.isHost
+      ? engine.p2pNet.getRemotePlayerStates()
+      : Array.from(engine.p2pNet.updateEntityInterpolation().values()).filter(p => p.id !== engine.p2pNet.localPeerId);
+
+    remote.forEach((p, i) => {
+      if (!engine.p2pNet.isHost && p.isBot && !botsEnabledRef.current) return;
+      const last = engine.remoteLastPos.get(p.id) || p.position;
+      const vel = new THREE.Vector3((p.position[0] - last[0]) / Math.max(dt, 1e-3), 0, (p.position[2] - last[2]) / Math.max(dt, 1e-3));
+      engine.remoteLastPos.set(p.id, [p.position[0], p.position[1], p.position[2]]);
+      upsert(p.id, i + 7, p.position, p.rotationY, p.pitch, p.isCrouching, p.health <= 0, vel, true);
+    });
+
+    // Remove skeletons for entities that no longer exist
+    engine.remoteSkeletons.forEach((skel, id) => {
+      if (!live.has(id)) {
+        engine.scene.remove(skel.root);
+        engine.remoteSkeletons.delete(id);
+        engine.remoteLastPos.delete(id);
+      }
     });
   };
 
@@ -1090,7 +1191,7 @@ export default function App() {
         // BOT ELIMINATED!
         if (hitBot.state.health <= 0) {
           hitBot.state.deaths++;
-          setPlayerKills(prev => prev + 1);
+          setPlayerKills(prev => { playerKillsRef.current = prev + 1; return prev + 1; });
 
           // Killstreak & Rival Coin Rewards
           setKillStreak(prev => prev + 1);
@@ -1357,7 +1458,7 @@ export default function App() {
           deaths={playerDeaths}
           webGPUCapable={webGPUCapable}
           isWebGPU={isWebGPU}
-          networkStatus={engineRef.current?.p2pNet.isConnected ? 'online' : 'connecting'}
+          networkStatus={networkStatus === 'connected' ? 'online' : networkStatus === 'connecting' || networkStatus === 'idle' ? 'connecting' : 'offline'}
           weaponCount={Object.keys(WEAPON_DEFINITIONS).length}
           arenaCount={ARENA_PLAYLIST_COUNT}
           onSelectMode={handleSelectMode}
@@ -1398,8 +1499,8 @@ export default function App() {
         activeParticles={activeParticles}
         preset={currentPreset}
         isWebGPU={isWebGPU}
-        isHost={engineRef.current?.p2pNet.isHost ?? true}
-        roomId={engineRef.current?.p2pNet.hostPeerId || ''}
+        isHost={isHostSession}
+        roomId={roomCode}
         onSendChat={handleSendChat}
         chatMessages={chatMessages}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -1493,15 +1594,33 @@ export default function App() {
       <LobbyModal
         isOpen={lobbyOpen}
         onClose={() => { setLobbyOpen(false); if (sessionMode === 'friends') requestPointerLock(); }}
-        roomId={engineRef.current?.p2pNet.hostPeerId || ''}
-        isHost={engineRef.current?.p2pNet.isHost ?? true}
-        isConnected={engineRef.current?.p2pNet.isConnected ?? false}
+        roomId={roomCode}
+        isHost={isHostSession}
+        isConnected={networkStatus === 'connected'}
+        networkStatus={networkStatus}
         allPlayers={allPlayers}
         onHostNewRoom={() => {
-          engineRef.current?.p2pNet.hostRoom();
+          const engine = engineRef.current;
+          if (!engine) return;
+          engine.remoteSkeletons.forEach(sk => engine.scene.remove(sk.root));
+          engine.remoteSkeletons.clear();
+          engine.remoteMoveStates.clear();
+          engine.p2pNet.hostRoom().catch(() => {});
         }}
-        onJoinRoom={(code) => {
-          engineRef.current?.p2pNet.joinRoom(code);
+        onJoinRoom={async (code) => {
+          const engine = engineRef.current;
+          if (!engine) return;
+          engine.remoteSkeletons.forEach(sk => engine.scene.remove(sk.root));
+          engine.remoteSkeletons.clear();
+          engine.remoteMoveStates.clear();
+          const ok = await engine.p2pNet.joinRoom(code);
+          if (ok) {
+            setBotsEnabled(false);
+            applyBotVisibility(false);
+            if (!sessionModeRef.current) setSessionMode('friends');
+            setLobbyOpen(false);
+            requestPointerLock();
+          }
         }}
         onAddBot={() => {
           const engine = engineRef.current;
