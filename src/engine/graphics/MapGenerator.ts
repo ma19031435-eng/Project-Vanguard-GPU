@@ -236,6 +236,9 @@ export class MapGenerator {
       this.createDestructibleCrate(`container_${index}`, loc.x, loc.sy / 2, loc.z, loc.sx, loc.sy, loc.sz, loc.mat);
     });
 
+    // 6. Movement Course: slide gates, flank platforms, approach ramps & tactical cover
+    this.buildMovementCourse();
+
     const spawnPoints: [number, number, number][] = [
       [0, 0, -38],
       [0, 0, 38],
@@ -246,6 +249,191 @@ export class MapGenerator {
     ];
 
     return { spawnPoints };
+  }
+
+  /**
+   * Momentum movement course layered onto the outpost:
+   * - Four slide gates: a low horizontal bar you can only pass under while sliding
+   * - Four elevated corner flank platforms with approach ramps
+   * - Eight waist-high cover blocks for peeking / slide-cancel duels
+   * - Emissive route strips and beacons that read the slide lanes at a glance
+   */
+  private buildMovementCourse(): void {
+    const supportMat = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.45, metalness: 0.8 });
+    const barMat = new THREE.MeshStandardMaterial({
+      color: 0x0e7490, emissive: 0x22d3ee, emissiveIntensity: 0.9, roughness: 0.3, metalness: 0.6
+    });
+    const platformMat = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.55, metalness: 0.6 });
+    const coverMat = new THREE.MeshStandardMaterial({ color: 0x6b6256, roughness: 0.85, metalness: 0.05 });
+    const stripMat = new THREE.MeshStandardMaterial({
+      color: 0x0891b2, emissive: 0x06b6d4, emissiveIntensity: 1.6, roughness: 0.4, metalness: 0.2
+    });
+    const beaconMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b, emissive: 0xfbbf24, emissiveIntensity: 2.2, roughness: 0.3, metalness: 0.4
+    });
+
+    // --- Slide gates on the four open center lanes (between bunker and catwalks) ---
+    // Gate clearance 1.0m: standing (1.62 eye) & crouching (1.15) are blocked, sliding (0.82) passes.
+    const gateClearance = 1.0;
+    const gates = [
+      { x: 0, z: -16, alongX: true },
+      { x: 0, z: 16, alongX: true },
+      { x: -16, z: 0, alongX: false },
+      { x: 16, z: 0, alongX: false }
+    ];
+
+    gates.forEach((g, i) => {
+      const span = 6.5;
+      const half = span / 2;
+      // Two support pillars
+      for (const side of [-1, 1]) {
+        const px = g.alongX ? g.x + side * half : g.x;
+        const pz = g.alongX ? g.z : g.z + side * half;
+        const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.6, 0.45), supportMat);
+        pillar.position.set(px, 1.3, pz);
+        pillar.castShadow = true;
+        pillar.receiveShadow = true;
+        this.scene.add(pillar);
+        this.worldCollisionBoxes.push({
+          minX: px - 0.225, minY: 0, minZ: pz - 0.225,
+          maxX: px + 0.225, maxY: 2.6, maxZ: pz + 0.225
+        });
+      }
+
+      // Horizontal slide bar — collidable from clearance height to top, passable underneath
+      const barGeo = g.alongX
+        ? new THREE.BoxGeometry(span, 0.3, 0.3)
+        : new THREE.BoxGeometry(0.3, 0.3, span);
+      const bar = new THREE.Mesh(barGeo, barMat);
+      bar.position.set(g.x, gateClearance + 0.15, g.z);
+      bar.castShadow = true;
+      this.scene.add(bar);
+      this.worldCollisionBoxes.push({
+        minX: g.alongX ? g.x - half : g.x - 0.15,
+        minY: gateClearance,
+        minZ: g.alongX ? g.z - 0.15 : g.z - half,
+        maxX: g.alongX ? g.x + half : g.x + 0.15,
+        maxY: gateClearance + 0.3,
+        maxZ: g.alongX ? g.z + 0.15 : g.z + half
+      });
+
+      // Overhead sign plate
+      const sign = new THREE.Mesh(
+        g.alongX ? new THREE.BoxGeometry(span, 0.5, 0.12) : new THREE.BoxGeometry(0.12, 0.5, span),
+        supportMat
+      );
+      sign.position.set(g.x, 2.35, g.z);
+      this.scene.add(sign);
+
+      // Glowing floor strip through the gate marking the slide lane
+      const strip = new THREE.Mesh(
+        g.alongX ? new THREE.BoxGeometry(0.5, 0.03, 10) : new THREE.BoxGeometry(10, 0.03, 0.5),
+        stripMat
+      );
+      strip.position.set(g.x, 0.015, g.z);
+      strip.receiveShadow = true;
+      this.scene.add(strip);
+
+      // Gate beacon light
+      const light = new THREE.PointLight(0x22d3ee, 2.4, 14, 2);
+      light.position.set(g.x, 2.1, g.z);
+      this.scene.add(light);
+      this.dynamicLights.push(light);
+      void i;
+    });
+
+    // --- Elevated corner flank platforms + approach ramps ---
+    const corners = [
+      { x: -30, z: -30 },
+      { x: 30, z: -30 },
+      { x: -30, z: 30 },
+      { x: 30, z: 30 }
+    ];
+    corners.forEach(c => {
+      const w = 9, d = 9, h = 3.2;
+      const plat = new THREE.Mesh(new THREE.BoxGeometry(w, 0.5, d), platformMat);
+      plat.position.set(c.x, h, c.z);
+      plat.castShadow = true;
+      plat.receiveShadow = true;
+      this.scene.add(plat);
+      this.worldCollisionBoxes.push({
+        minX: c.x - w / 2, minY: h - 0.25, minZ: c.z - d / 2,
+        maxX: c.x + w / 2, maxY: h + 0.25, maxZ: c.z + d / 2
+      });
+
+      // Four support legs
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.4, h, 0.4), supportMat);
+        leg.position.set(c.x + sx * (w / 2 - 0.4), h / 2, c.z + sz * (d / 2 - 0.4));
+        leg.castShadow = true;
+        this.scene.add(leg);
+      }
+
+      // Approach ramp pointing toward arena center (stepped collision so players can walk up)
+      const dirX = -Math.sign(c.x);
+      const dirZ = -Math.sign(c.z);
+      const rampLen = 10;
+      const rampW = 3.2;
+      const rx = c.x + dirX * (w / 2 + rampLen / 2);
+      const rz = c.z;
+      const ramp = new THREE.Mesh(new THREE.BoxGeometry(rampLen, 0.3, rampW), platformMat);
+      ramp.position.set(rx, h / 2, rz);
+      ramp.rotation.z = dirX * Math.atan2(h, rampLen);
+      ramp.castShadow = true;
+      ramp.receiveShadow = true;
+      this.scene.add(ramp);
+      const steps = 8;
+      for (let i = 0; i < steps; i++) {
+        const t0 = i / steps, t1 = (i + 1) / steps;
+        const segX0 = rx + dirX * (rampLen / 2) - dirX * t0 * rampLen;
+        const segX1 = rx + dirX * (rampLen / 2) - dirX * t1 * rampLen;
+        this.worldCollisionBoxes.push({
+          minX: Math.min(segX0, segX1), minY: 0, minZ: rz - rampW / 2,
+          maxX: Math.max(segX0, segX1), maxY: h * t1, maxZ: rz + rampW / 2
+        });
+      }
+      void dirZ;
+
+      // Corner beacon
+      const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.6, 12), beaconMat);
+      beacon.position.set(c.x, h + 1.05, c.z);
+      this.scene.add(beacon);
+      const bl = new THREE.PointLight(0xfbbf24, 1.8, 16, 2);
+      bl.position.set(c.x, h + 2, c.z);
+      this.scene.add(bl);
+      this.dynamicLights.push(bl);
+    });
+
+    // --- Waist-high tactical cover (symmetrical) ---
+    const covers = [
+      { x: -8, z: -26 }, { x: 8, z: -26 }, { x: -8, z: 26 }, { x: 8, z: 26 },
+      { x: -26, z: -8 }, { x: -26, z: 8 }, { x: 26, z: -8 }, { x: 26, z: 8 }
+    ];
+    covers.forEach(cv => {
+      const w = 2.6, h = 1.1, d = 0.9;
+      const alongX = Math.abs(cv.z) > Math.abs(cv.x);
+      const geo = alongX ? new THREE.BoxGeometry(w, h, d) : new THREE.BoxGeometry(d, h, w);
+      const m = new THREE.Mesh(geo, coverMat);
+      m.position.set(cv.x, h / 2, cv.z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      this.scene.add(m);
+      this.worldCollisionBoxes.push({
+        minX: cv.x - (alongX ? w : d) / 2, minY: 0, minZ: cv.z - (alongX ? d : w) / 2,
+        maxX: cv.x + (alongX ? w : d) / 2, maxY: h, maxZ: cv.z + (alongX ? d : w) / 2
+      });
+    });
+
+    // --- Perimeter route guidance strips (ring road under the catwalks) ---
+    const ringR = 32;
+    for (const [sx, sz, horiz] of [[0, -1, true], [0, 1, true], [-1, 0, false], [1, 0, false]] as const) {
+      const strip = new THREE.Mesh(
+        horiz ? new THREE.BoxGeometry(44, 0.03, 0.3) : new THREE.BoxGeometry(0.3, 0.03, 44),
+        stripMat
+      );
+      strip.position.set(sx * ringR, 0.015, sz * ringR);
+      this.scene.add(strip);
+    }
   }
 
   private buildCatwalk(x: number, y: number, z: number, w: number, d: number): void {
