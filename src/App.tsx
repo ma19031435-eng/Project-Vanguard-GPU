@@ -147,6 +147,7 @@ export default function App() {
     particleTypeArr: Float32Array;
     particleSizeArr: Float32Array;
     particleNextIdx: number;
+    particleActive: Set<number>;
     remoteSkeletons: Map<string, HumanSkeleton>;
     remoteMoveStates: Map<string, CS2MovementState>;
     remoteLastPos: Map<string, [number, number, number]>;
@@ -524,7 +525,9 @@ export default function App() {
     particleColorArr.fill(1.0);
     particleGeo.setAttribute('particleColor', new THREE.BufferAttribute(particleColorArr, 4));
     particleGeo.setAttribute('particleType', new THREE.BufferAttribute(particleTypeArr, 1));
-    particleSizeArr.fill(2.2);
+    particleSizeArr.fill(0.0);
+    particleMaxLifeArr.fill(1.0); // avoid life/maxLife NaN in the shader for untouched slots
+    for (let i = 0; i < pCount; i++) particlePosArr[i * 3 + 1] = -1000; // parked below the world
     particleGeo.setAttribute('particleSize', new THREE.BufferAttribute(particleSizeArr, 1));
 
     const particleMat = new THREE.ShaderMaterial({
@@ -564,6 +567,7 @@ export default function App() {
       particleTypeArr,
       particleSizeArr,
       particleNextIdx: 0,
+      particleActive: new Set(),
       remoteSkeletons: new Map(),
       remoteMoveStates: new Map(),
       remoteLastPos: new Map(),
@@ -647,6 +651,31 @@ export default function App() {
         } else {
           (tracer.line.material as THREE.LineBasicMaterial).opacity = tracer.life / tracer.maxLife;
         }
+      }
+
+      // Age GPU particles: only iterate the active set, never the full 150k buffer.
+      if (engine.particleActive.size > 0) {
+        const lifeArr = engine.particleLifeArr;
+        const sizeArr = engine.particleSizeArr;
+        const colArr = engine.particleColorArr;
+        const posArr = engine.particlePosArr;
+        for (const idx of engine.particleActive) {
+          const remaining = lifeArr[idx] - dt;
+          if (remaining <= 0) {
+            lifeArr[idx] = 0;
+            sizeArr[idx] = 0;
+            colArr[idx * 4 + 3] = 0;
+            posArr[idx * 3 + 1] = -1000;
+            engine.particleActive.delete(idx);
+          } else {
+            lifeArr[idx] = remaining;
+            colArr[idx * 4 + 3] = Math.min(1, remaining / Math.max(engine.particleMaxLifeArr[idx], 1e-3)) * (engine.particleTypeArr[idx] === 1 ? 0.6 : 1.0);
+          }
+        }
+        engine.particleGeo.attributes.life.needsUpdate = true;
+        engine.particleGeo.attributes.particleSize.needsUpdate = true;
+        engine.particleGeo.attributes.particleColor.needsUpdate = true;
+        engine.particleGeo.attributes.position.needsUpdate = true;
       }
 
       // 13. CS2 Source-Engine Movement
@@ -1002,6 +1031,7 @@ export default function App() {
     for (let i = 0; i < count; i++) {
       const idx = engine.particleNextIdx % totalAllocated;
       engine.particleNextIdx++;
+      engine.particleActive.add(idx);
 
       particlePosArr[idx * 3] = origin[0];
       particlePosArr[idx * 3 + 1] = origin[1];
