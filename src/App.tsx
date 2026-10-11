@@ -412,7 +412,7 @@ export default function App() {
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 0.7; // Sky dome is HDR; keep exposure conservative
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -429,13 +429,13 @@ export default function App() {
     }, 250);
 
     // 4. Real Earth Midday Sunlight + Warm Sky Reflections
-    const skyLight = new THREE.HemisphereLight(0x8fb8e8, 0xa08a66, 0.9);
+    const skyLight = new THREE.HemisphereLight(0x8fb8e8, 0xa08a66, 1.1);
     scene.add(skyLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff1d6, 3.6);
+    const sunLight = new THREE.DirectionalLight(0xfff1d6, 4.2);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 8192;
-    sunLight.shadow.mapSize.height = 8192;
+    sunLight.shadow.mapSize.width = 4096;
+    sunLight.shadow.mapSize.height = 4096;
     sunLight.shadow.camera.near = 10;
     sunLight.shadow.camera.far = 320;
     sunLight.shadow.camera.left = -75;

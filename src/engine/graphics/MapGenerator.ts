@@ -8,6 +8,7 @@ import { BoundingBox3D } from '../wasm/WasmPhysicsCore.ts';
 import { ProceduralTextureGenerator } from './MaterialsAndTextures.ts';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { EnvironmentDetailer } from './EnvironmentDetailer.ts';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export interface DestructibleObject {
   id: string;
@@ -501,12 +502,32 @@ export class MapGenerator {
       vent.position.set(sx * w, h / 2 + 0.04, 0);
       g.add(vent);
     }
-    g.traverse(o => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-    g.position.set(x, y, z);
-    this.scene.add(g);
+    // Batch the ~70 detail pieces into two draw calls (one per material)
+    const batched = new THREE.Group();
+    for (const mat of [ribMat, castMat]) {
+      const geos: THREE.BufferGeometry[] = [];
+      g.children.forEach(c => {
+        const m = c as THREE.Mesh;
+        if (m.material !== mat) return;
+        m.updateMatrix();
+        const gg = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+        gg.applyMatrix4(m.matrix);
+        geos.push(gg);
+      });
+      if (!geos.length) continue;
+      const merged = BufferGeometryUtils.mergeGeometries(geos, false);
+      geos.forEach(gg => gg.dispose());
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      batched.add(mesh);
+    }
+    batched.position.set(x, y, z);
+    this.scene.add(batched);
     // Keep decoration tied to the crate so it disappears when destroyed
     const crate = Array.from(this.destructibles.values()).pop();
-    if (crate) crate.mesh.userData.decor = g;
+    if (crate) crate.mesh.userData.decor = batched;
   }
 
   private buildCatwalk(x: number, y: number, z: number, w: number, d: number): void {

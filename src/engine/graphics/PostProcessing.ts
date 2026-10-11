@@ -10,7 +10,6 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
@@ -22,11 +21,11 @@ const CinematicShader = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     uTime: { value: 0 },
-    uVignette: { value: 0.42 },
+    uVignette: { value: 0.3 },
     uAberration: { value: 0.0022 },
-    uGrain: { value: 0.035 },
+    uGrain: { value: 0.02 },
     uSaturation: { value: 1.08 },
-    uContrast: { value: 1.06 }
+    uContrast: { value: 1.03 }
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -73,7 +72,6 @@ const CinematicShader = {
 
 export class CinematicPipeline {
   public composer: EffectComposer;
-  public gtao: GTAOPass;
   public bloom: UnrealBloomPass;
   public smaa: SMAAPass;
   public cinematic: ShaderPass;
@@ -98,10 +96,10 @@ export class CinematicPipeline {
     this.sky = new Sky();
     this.sky.scale.setScalar(4500);
     const u = this.sky.material.uniforms;
-    u.turbidity.value = 6.5;
-    u.rayleigh.value = 1.9;
-    u.mieCoefficient.value = 0.0065;
-    u.mieDirectionalG.value = 0.82;
+    u.turbidity.value = 8.0;
+    u.rayleigh.value = 2.2;
+    u.mieCoefficient.value = 0.004;
+    u.mieDirectionalG.value = 0.8;
     scene.add(this.sky);
 
     const elevation = THREE.MathUtils.degToRad(38);
@@ -132,28 +130,15 @@ export class CinematicPipeline {
 
     this.composer.addPass(new RenderPass(scene, camera));
 
-    this.gtao = new GTAOPass(scene, camera, w, h);
-    this.gtao.output = GTAOPass.OUTPUT.Default;
-    this.gtao.updateGtaoMaterial({
-      radius: 0.9,
-      distanceExponent: 1.2,
-      thickness: 1.0,
-      scale: 1.3,
-      samples: 20,
-      distanceFallOff: 1.0,
-      screenSpaceRadius: false
-    });
-    this.gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, radiusExponent: 1, rings: 2, samples: 16 });
-    this.gtao.blendIntensity = 0.85;
-    this.composer.addPass(this.gtao);
-
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.65, 0.88);
+    // Bloom only on genuinely hot pixels (emissives, sun) — threshold sits above the HDR sky.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.35, 0.3, 1.6);
     this.composer.addPass(this.bloom);
+
+    // Tone mapping + sRGB first, then grade on display-referred colour.
+    this.composer.addPass(new OutputPass());
 
     this.cinematic = new ShaderPass(CinematicShader);
     this.composer.addPass(this.cinematic);
-
-    this.composer.addPass(new OutputPass());
 
     this.smaa = new SMAAPass();
     this.composer.addPass(this.smaa);
@@ -182,13 +167,13 @@ export class CinematicPipeline {
     this.envTarget = this.pmrem.fromScene(skyScene, 0.02);
     this.scene.add(this.sky); // re-attach after rendering into PMREM
     this.scene.environment = this.envTarget.texture;
-    this.scene.environmentIntensity = 0.75;
+    // The sky is HDR-bright; keep IBL contribution modest so surfaces don't wash out.
+    this.scene.environmentIntensity = 0.22;
   }
 
   public setSize(w: number, h: number): void {
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
     this.composer.setSize(w, h);
-    this.gtao.setSize(w, h);
     this.bloom.setSize(w, h);
   }
 

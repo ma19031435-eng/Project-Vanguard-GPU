@@ -9,6 +9,7 @@
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { BoundingBox3D } from '../wasm/WasmPhysicsCore.ts';
 
 type Vec3 = [number, number, number];
@@ -17,6 +18,9 @@ export class EnvironmentDetailer {
   private scene: THREE.Scene;
   private boxes: BoundingBox3D[];
   private rng: () => number;
+  /** Static meshes queued for batching, grouped by material. */
+  private batches: Map<THREE.Material, { geos: THREE.BufferGeometry[]; cast: boolean; receive: boolean }> = new Map();
+  public drawCallsSaved = 0;
 
   // Shared materials
   public readonly mat = {
@@ -62,18 +66,80 @@ export class EnvironmentDetailer {
     this.buildVegetationAndRocks();
     this.buildGroundDecals();
     this.buildSignage();
+    this.flushBatches();
+  }
+
+  /**
+   * Static batching: bakes every queued mesh's world transform into its geometry
+   * and merges all geometry that shares a material into a single draw call.
+   */
+  private flushBatches(): void {
+    this.batches.forEach((batch, material) => {
+      if (batch.geos.length === 0) return;
+      const merged = BufferGeometryUtils.mergeGeometries(batch.geos, false);
+      batch.geos.forEach(g => g.dispose());
+      if (!merged) return;
+      merged.computeBoundingSphere();
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.castShadow = batch.cast;
+      mesh.receiveShadow = batch.receive;
+      mesh.matrixAutoUpdate = false;
+      this.scene.add(mesh);
+      this.drawCallsSaved += batch.geos.length - 1;
+    });
+    this.batches.clear();
+  }
+
+  private static normalizeForMerge(geo: THREE.BufferGeometry): THREE.BufferGeometry | null {
+    let g = geo.index ? geo.toNonIndexed() : geo.clone();
+    if (!g.attributes.position) return null;
+    if (!g.attributes.normal) g.computeVertexNormals();
+    if (!g.attributes.uv) {
+      const n = g.attributes.position.count;
+      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+    }
+    // Keep only the attributes every primitive shares so merging never fails.
+    for (const name of Object.keys(g.attributes)) {
+      if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+    }
+    g.clearGroups();
+    return g;
   }
 
   // ------------------------------------------------------------------ helpers
 
-  private add(mesh: THREE.Object3D, castShadow = true, receiveShadow = true): void {
-    mesh.traverse(o => {
-      if ((o as THREE.Mesh).isMesh) {
-        o.castShadow = castShadow;
-        o.receiveShadow = receiveShadow;
+  private add(obj: THREE.Object3D, castShadow = true, receiveShadow = true): void {
+    obj.updateMatrixWorld(true);
+    const leftovers: THREE.Object3D[] = [];
+    obj.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && !Array.isArray(m.material)) {
+        const g = EnvironmentDetailer.normalizeForMerge(m.geometry as THREE.BufferGeometry);
+        if (g) {
+          g.applyMatrix4(m.matrixWorld);
+          const key = m.material as THREE.Material;
+          let b = this.batches.get(key);
+          if (!b) { b = { geos: [], cast: castShadow, receive: receiveShadow }; this.batches.set(key, b); }
+          b.geos.push(g);
+          return;
+        }
+      }
+      if ((o as THREE.Light).isLight || (o as any).isLensflare) leftovers.push(o);
+    });
+    // Lights (and their targets) are re-parented to the scene with their world transform preserved.
+    leftovers.forEach(l => {
+      const target = (l as THREE.SpotLight).target;
+      const wp = new THREE.Vector3();
+      l.getWorldPosition(wp);
+      this.scene.add(l);
+      l.position.copy(wp);
+      if (target) {
+        const tp = new THREE.Vector3();
+        target.getWorldPosition(tp);
+        this.scene.add(target);
+        target.position.copy(tp);
       }
     });
-    this.scene.add(mesh);
   }
 
   private collide(x: number, y: number, z: number, w: number, h: number, d: number): void {
