@@ -8,11 +8,16 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
       },
     },
     server: {
       allowedHosts: true as const,
+      // In dev, forward official-server routes to a locally running `npm run server`.
+      proxy: {
+        '/api': { target: 'http://localhost:8080', changeOrigin: true },
+        '/peerjs': { target: 'http://localhost:8080', changeOrigin: true, ws: true },
+      },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
