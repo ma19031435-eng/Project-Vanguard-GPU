@@ -19,7 +19,10 @@ import { LobbyModal } from './components/Modals/LobbyModal.tsx';
 import { ShopModal } from './components/Modals/ShopModal.tsx';
 import { ShopSystem, WeaponSkinId, CharacterHatId, SHOP_SKINS } from './engine/shop/ShopSystem.ts';
 import { SentinelAntiCheat } from './engine/anticheat/SentinelAntiCheat.ts';
-import { Play, Crosshair, Shield, Trophy } from 'lucide-react';
+import { MainLobby, PauseOverlay, SessionMode } from './components/Lobby/MainLobby.tsx';
+import { Trophy } from 'lucide-react';
+
+const ARENA_PLAYLIST_COUNT = 6;
 
 const MILITARY_RANKS = [
   'RECRUIT',
@@ -54,8 +57,12 @@ export default function App() {
   const [antiCheatViolations, setAntiCheatViolations] = useState(0);
   const [roundWinner, setRoundWinner] = useState<string | null>(null);
 
+  // Session flow: players spawn in the lobby and pick a deployment.
+  const [sessionMode, setSessionMode] = useState<SessionMode | null>(null);
+  const sessionModeRef = useRef<SessionMode | null>(null);
+  sessionModeRef.current = sessionMode;
+
   // Modal & Engine State
-  const [isGameStarted, setIsGameStarted] = useState(false);
   const [isPointerLocked, setIsPointerLocked] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lobbyOpen, setLobbyOpen] = useState(false);
@@ -237,6 +244,58 @@ export default function App() {
     setCurrentWeapon(w);
   }, []);
 
+  const requestPointerLock = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || document.pointerLockElement === canvas) return;
+    if (Date.now() - lastPointerLockExit.current < 1100) return;
+    try {
+      const p = (canvas.requestPointerLock as any)();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      engineRef.current?.audioEngine.init();
+    } catch {}
+  }, []);
+
+  const applyBotVisibility = useCallback((visible: boolean) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.botSim.enabled = visible;
+    engine.remoteSkeletons.forEach(skel => { skel.root.visible = visible; });
+  }, []);
+
+  // Deploy from lobby into one of the three session types.
+  const handleSelectMode = useCallback((mode: SessionMode) => {
+    const engine = engineRef.current;
+    setSessionMode(mode);
+    setRoundWinner(null);
+    setPlayerKills(0);
+    setKillStreak(0);
+
+    if (mode === 'bots') {
+      setBotsEnabled(true);
+      applyBotVisibility(true);
+      setChatMessages(prev => [...prev, { sender: 'MATCH CONTROL', text: 'Bot Skirmish started. First to 10 eliminations wins.', time: Date.now() }]);
+      requestPointerLock();
+    } else if (mode === 'range') {
+      setBotsEnabled(false);
+      applyBotVisibility(false);
+      setChatMessages(prev => [...prev, { sender: 'RANGE OFFICER', text: 'Shooting Range open. Enemies disabled — practice recoil, slides and slide-cancels freely.', time: Date.now() }]);
+      requestPointerLock();
+    } else {
+      setBotsEnabled(false);
+      applyBotVisibility(false);
+      setLobbyOpen(true);
+      setChatMessages(prev => [...prev, { sender: 'VANGUARD NETWORK', text: 'Private match setup. Share your room code or join a friend.', time: Date.now() }]);
+    }
+    if (engine) engine.isDead = false;
+  }, [applyBotVisibility, requestPointerLock]);
+
+  const handleReturnToLobby = useCallback(() => {
+    setSessionMode(null);
+    setLobbyOpen(false);
+    setRoundWinner(null);
+    if (document.pointerLockElement) document.exitPointerLock();
+  }, []);
+
   // Authoritative Player Respawn
   const handleRespawn = useCallback(() => {
     const engine = engineRef.current;
@@ -394,8 +453,9 @@ export default function App() {
     const p2pNet = new P2PNetworkEngine();
     p2pNet.hostRoom();
 
-    // 10. Insanely Smart Bot Simulation Engine (Defaulted to Nerfed / Casual)
+    // 10. Insanely Smart Bot Simulation Engine (idle until a deployment is selected)
     const botSim = new BotSimulation(botDifficultyRef.current);
+    botSim.enabled = false;
 
     // 11. Overloaded GPU Particle Buffer (Volumetric desert sand & dust motes)
     const pCount = 150000;
@@ -769,6 +829,7 @@ export default function App() {
       let skel = engine.remoteSkeletons.get(bot.state.id);
       if (!skel) {
         skel = HumanOperatorBuilder.createOperator(index % 2 === 1);
+        skel.root.visible = engine.botSim.enabled;
         engine.scene.add(skel.root);
         engine.remoteSkeletons.set(bot.state.id, skel);
       }
@@ -1093,23 +1154,9 @@ export default function App() {
   };
 
   const handleCanvasClick = () => {
-    if (!isGameStarted) {
-      setIsGameStarted(true);
-    }
-    const canvas = canvasRef.current;
-    if (!canvas || document.pointerLockElement === canvas) return;
-
-    if (Date.now() - lastPointerLockExit.current < 1100) {
-      return;
-    }
-
-    try {
-      const p = (canvas.requestPointerLock as any)();
-      if (p && typeof p.catch === 'function') {
-        p.catch(() => {});
-      }
-      engineRef.current?.audioEngine.init();
-    } catch {}
+    if (!sessionModeRef.current) return; // Lobby owns the screen until a mode is chosen.
+    if (settingsOpen || shopOpen || lobbyOpen) return;
+    requestPointerLock();
   };
 
   useEffect(() => {
@@ -1137,6 +1184,7 @@ export default function App() {
 
     const handleMouseDown = (e: MouseEvent) => {
       if (document.pointerLockElement !== canvasRef.current) return;
+      if (!sessionModeRef.current) return;
       if (e.button === 0) {
         handleFire();
       } else if (e.button === 2) {
@@ -1166,6 +1214,9 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       const engine = engineRef.current;
       if (!engine) return;
+      if (!sessionModeRef.current) return;
+      const typing = (e.target as HTMLElement | null)?.tagName === 'INPUT' || (e.target as HTMLElement | null)?.tagName === 'TEXTAREA';
+      if (typing) return;
 
       engine.keysDown.add(e.code);
 
@@ -1289,48 +1340,43 @@ export default function App() {
         className="w-full h-full block cursor-crosshair"
       />
 
-      {!webGPUCapable && (
+      {!webGPUCapable && sessionMode && (
         <div className="absolute inset-x-0 top-0 z-[70] bg-red-950/95 border-b border-red-400 px-4 py-3 text-center text-xs text-red-100">
           <b>WEBGPU REQUIRED:</b> This competitive build mandates a WebGPU-capable browser and GPU. Enable WebGPU or use a current Chromium-based browser.
         </div>
       )}
 
-      {!isPointerLocked && !isPlayerDead && (
-        <div 
-          onClick={handleCanvasClick}
-          className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center cursor-pointer z-40 p-6 text-center"
-        >
-          <div className="max-w-md p-8 bg-zinc-950/90 border border-amber-500/50 rounded-2xl shadow-[0_0_35px_rgba(245,158,11,0.25)]">
-            <div className="flex items-center justify-center gap-2 mb-3">
-              <Crosshair className="w-8 h-8 text-amber-400 animate-spin" style={{ animationDuration: '8s' }} />
-              <h1 className="text-2xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-orange-400">
-                OPERATION DUST MIRAGE
-              </h1>
-            </div>
-
-            <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
-              Original arena FPS &bull; 9-weapon arsenal &bull; Momentum movement &bull; Armory &bull; Bots &bull; P2P matches.
-            </p>
-
-            <div className="py-3 px-6 bg-amber-500 hover:bg-amber-400 text-black font-black text-sm rounded-xl transition shadow-[0_0_20px_rgba(245,158,11,0.5)] mb-6 flex items-center justify-center gap-2 cursor-pointer">
-              <Play className="w-4 h-4 fill-black" /> CLICK TO DEPLOY TO RIVALS ARENA
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-[11px] text-zinc-400 text-left border-t border-zinc-800 pt-4">
-              <div><span className="text-amber-400 font-bold">[W, A, S, D]</span> Counter-Strafe / Bhop</div>
-              <div><span className="text-amber-400 font-bold">[1 - 9 / SCROLL]</span> 9 Weapon Arsenal</div>
-              <div><span className="text-amber-400 font-bold">[B]</span> Rivals Armory &amp; Skins Shop</div>
-              <div><span className="text-amber-400 font-bold">[RIGHT CLICK]</span> AWP Optical Scope</div>
-              <div><span className="text-amber-400 font-bold">[C / CTRL]</span> Slide &bull; [SPACE] Slide-cancel</div>
-              <div><span className="text-amber-400 font-bold">[LEFT CLICK]</span> Fire / Slash / Rocket</div>
-              <div><span className="text-amber-400 font-bold">[SHIFT]</span> Silent Tactical Walk</div>
-              <div><span className="text-amber-400 font-bold">[TAB]</span> Match Leaderboard</div>
-            </div>
-          </div>
-        </div>
+      {!sessionMode && (
+        <MainLobby
+          playerLevel={playerLevel}
+          rankName={MILITARY_RANKS[Math.min(playerLevel - 1, MILITARY_RANKS.length - 1)]}
+          xp={playerXp}
+          xpToNextLevel={xpToNextLevel}
+          coins={coins}
+          kills={playerKills}
+          deaths={playerDeaths}
+          webGPUCapable={webGPUCapable}
+          isWebGPU={isWebGPU}
+          networkStatus={engineRef.current?.p2pNet.isConnected ? 'online' : 'connecting'}
+          weaponCount={Object.keys(WEAPON_DEFINITIONS).length}
+          arenaCount={ARENA_PLAYLIST_COUNT}
+          onSelectMode={handleSelectMode}
+          onOpenArmory={() => setShopOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
       )}
 
-      <TacticalHUD
+      {sessionMode && !isPointerLocked && !isPlayerDead && !settingsOpen && !shopOpen && !lobbyOpen && !roundWinner && (
+        <PauseOverlay
+          mode={sessionMode}
+          onResume={requestPointerLock}
+          onReturnToLobby={handleReturnToLobby}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenLobby={() => setLobbyOpen(true)}
+        />
+      )}
+
+      {sessionMode && <TacticalHUD
         health={playerHp}
         armor={playerArmor}
         ammo={ammo}
@@ -1380,7 +1426,7 @@ export default function App() {
         onOpenShop={() => setShopOpen(true)}
         killStreak={killStreak}
         onSelectWeaponSlot={handleSelectWeapon}
-      />
+      />}
 
       <ShopModal
         isOpen={shopOpen}
@@ -1402,16 +1448,25 @@ export default function App() {
               <div className="text-sm font-black text-white">+250 RIVAL COINS &bull; +500 XP</div>
               <div className="text-[11px] text-zinc-400 mt-1">Kills: {playerKills} | Deaths: {playerDeaths} | Spree: {killStreak}</div>
             </div>
-            <button
-              onClick={() => {
-                setRoundWinner(null);
-                setPlayerKills(0);
-                setKillStreak(0);
-              }}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-black font-black text-sm rounded-xl transition shadow-[0_0_20px_#f59e0b] cursor-pointer"
-            >
-              START NEXT ROUND
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  setRoundWinner(null);
+                  setPlayerKills(0);
+                  setKillStreak(0);
+                  requestPointerLock();
+                }}
+                className="py-3 bg-amber-500 hover:bg-amber-400 text-black font-black text-sm rounded-xl transition shadow-[0_0_20px_#f59e0b] cursor-pointer"
+              >
+                NEXT ROUND
+              </button>
+              <button
+                onClick={handleReturnToLobby}
+                className="py-3 bg-white/5 hover:bg-white/10 border border-white/15 text-zinc-200 font-black text-sm rounded-xl transition cursor-pointer"
+              >
+                LOBBY
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1437,7 +1492,7 @@ export default function App() {
 
       <LobbyModal
         isOpen={lobbyOpen}
-        onClose={() => setLobbyOpen(false)}
+        onClose={() => { setLobbyOpen(false); if (sessionMode === 'friends') requestPointerLock(); }}
         roomId={engineRef.current?.p2pNet.hostPeerId || ''}
         isHost={engineRef.current?.p2pNet.isHost ?? true}
         isConnected={engineRef.current?.p2pNet.isConnected ?? false}
@@ -1449,7 +1504,11 @@ export default function App() {
           engineRef.current?.p2pNet.joinRoom(code);
         }}
         onAddBot={() => {
-          engineRef.current?.botSim.spawnInsaneBots(1);
+          const engine = engineRef.current;
+          if (!engine) return;
+          engine.botSim.spawnInsaneBots(1);
+          setBotsEnabled(true);
+          applyBotVisibility(true);
         }}
       />
     </div>
