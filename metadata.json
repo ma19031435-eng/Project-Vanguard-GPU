@@ -1,0 +1,6 @@
+{
+  "name": "Project Vanguard-GPU",
+  "description": "Ultra-high-fidelity multiplayer WebGPU/WASM FPS with P2P host-authoritative netcode, GPU compute particles, dynamic destruction, and spatial audio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
