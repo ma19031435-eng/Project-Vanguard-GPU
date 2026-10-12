@@ -1150,7 +1150,7 @@ export default function App() {
         (bot, rayOrigin, rayDir, isHeadshotAim) => {
           if (engine.isDead) return;
 
-          engine.audioEngine.playAssaultRifle(rayOrigin);
+          engine.audioEngine.playGunshot(bot.state.currentWeapon, rayOrigin);
           engine.botSim.registerSound(rayOrigin, 'gunfire');
           spawnBulletTracer(rayOrigin, rayDir, 75, '#ff4433');
 
@@ -1468,21 +1468,9 @@ export default function App() {
 
     const { def, pellets } = fireResult;
 
-    // Authentic Gunpowder & Melee Detonation Audio
-    if (def.id === 'rifle') engine.audioEngine.playAssaultRifle();
-    else if (def.id === 'railgun') engine.audioEngine.playPlasmaRailgun();
-    else if (def.id === 'shotgun') engine.audioEngine.playShotgun();
-    else if (def.id === 'pistol') engine.audioEngine.playPistol();
-    else if (def.id === 'smg') engine.audioEngine.playSMG();
-    else if (def.id === 'revolver') engine.audioEngine.playRevolver();
-    else if (def.id === 'crossbow') engine.audioEngine.playCrossbow();
-    else if (def.id === 'rpg') engine.audioEngine.playRPGLaunch();
-    else if (def.id === 'lmg') engine.audioEngine.playAssaultRifle();
-    else if (def.id === 'dmr') engine.audioEngine.playRevolver();
-    else if (def.id === 'scattergun') engine.audioEngine.playShotgun();
-    else if (def.id === 'autopistol') engine.audioEngine.playSMG();
-    else if (def.id === 'dualies') engine.audioEngine.playPistol();
-    else if (def.isMelee) engine.audioEngine.playMeleeSwing();
+    // Per-weapon layered report (crack / body / sub / bark / tail + mechanical action)
+    if (def.isMelee) engine.audioEngine.playMeleeSwing();
+    else engine.audioEngine.playGunshot(def.id);
 
     // Heavy CS2 Recoil Pitch Punch (Kicks view up! Player pulls down mouse to spray control)
     engine.punchPitch += def.recoilKickPitch * 0.65;

@@ -394,6 +394,46 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   }
 };
 
+/**
+ * Physical handling profile. Drives how each viewmodel moves: mass controls sway lag, bob amplitude,
+ * recoil recovery and roll; `action` is the mechanical cycle animated after every shot.
+ */
+export interface FeelProfile {
+  /** Approximate mass in kg - the single biggest driver of handling. */
+  massKg: number;
+  /** Post-shot mechanical cycle animated on named parts. */
+  action: 'slide' | 'bolt' | 'pump' | 'break' | 'belt' | 'revolver' | 'crossbow' | 'rocket' | 'none';
+  /** Delay before a manual action (bolt / pump / break) starts, seconds. */
+  actionDelay: number;
+  /** Duration of the action cycle, seconds. */
+  actionDur: number;
+  /** Visual roll (rad) per shot - revolvers & hand cannons twist, rifles stay flat. */
+  kickRoll: number;
+  /** Muzzle rise visual multiplier on top of def.recoilKickPitch. */
+  riseMul: number;
+  /** Melee swing style. */
+  melee?: 'slash' | 'stab' | 'overhead';
+}
+
+export const FEEL: Record<WeaponType, FeelProfile> = {
+  rifle:      { massKg: 3.5, action: 'none',     actionDelay: 0,    actionDur: 0,    kickRoll: 0.02, riseMul: 1.0 },
+  railgun:    { massKg: 6.5, action: 'bolt',     actionDelay: 0.28, actionDur: 0.75, kickRoll: 0.03, riseMul: 1.6 },
+  smg:        { massKg: 2.6, action: 'none',     actionDelay: 0,    actionDur: 0,    kickRoll: 0.03, riseMul: 0.8 },
+  shotgun:    { massKg: 4.2, action: 'pump',     actionDelay: 0.22, actionDur: 0.42, kickRoll: 0.05, riseMul: 1.5 },
+  pistol:     { massKg: 2.0, action: 'slide',    actionDelay: 0,    actionDur: 0.11, kickRoll: 0.09, riseMul: 1.4 },
+  revolver:   { massKg: 1.3, action: 'revolver', actionDelay: 0,    actionDur: 0.2,  kickRoll: 0.12, riseMul: 1.8 },
+  crossbow:   { massKg: 3.2, action: 'crossbow', actionDelay: 0,    actionDur: 0.18, kickRoll: 0.0,  riseMul: 0.3 },
+  melee:      { massKg: 1.1, action: 'none',     actionDelay: 0,    actionDur: 0,    kickRoll: 0,    riseMul: 0, melee: 'slash' },
+  rpg:        { massKg: 7.0, action: 'rocket',   actionDelay: 0,    actionDur: 0.5,  kickRoll: 0.04, riseMul: 1.2 },
+  lmg:        { massKg: 7.5, action: 'belt',     actionDelay: 0,    actionDur: 0.08, kickRoll: 0.025, riseMul: 1.1 },
+  dmr:        { massKg: 4.5, action: 'slide',    actionDelay: 0,    actionDur: 0.09, kickRoll: 0.02, riseMul: 1.3 },
+  scattergun: { massKg: 3.4, action: 'break',    actionDelay: 0,    actionDur: 0.3,  kickRoll: 0.08, riseMul: 2.0 },
+  autopistol: { massKg: 1.2, action: 'slide',    actionDelay: 0,    actionDur: 0.06, kickRoll: 0.07, riseMul: 1.0 },
+  dualies:    { massKg: 1.8, action: 'slide',    actionDelay: 0,    actionDur: 0.1,  kickRoll: 0.1,  riseMul: 1.2 },
+  sledge:     { massKg: 5.5, action: 'none',     actionDelay: 0,    actionDur: 0,    kickRoll: 0,    riseMul: 0, melee: 'overhead' },
+  knife:      { massKg: 0.3, action: 'none',     actionDelay: 0,    actionDur: 0,    kickRoll: 0,    riseMul: 0, melee: 'stab' }
+};
+
 export const ALL_WEAPONS: WeaponType[] = Object.keys(WEAPON_DEFINITIONS) as WeaponType[];
 export const weaponsForSlot = (slot: WeaponSlot): WeaponType[] => ALL_WEAPONS.filter(w => WEAPON_DEFINITIONS[w].slot === slot);
 export const isMeleeWeapon = (w: WeaponType): boolean => !!WEAPON_DEFINITIONS[w].isMelee;
@@ -478,6 +518,12 @@ export class WeaponSystem {
   private recoilOffset = new THREE.Vector3(0, 0, 0);
   private recoilRot = new THREE.Vector3(0, 0, 0);
   private bobTime: number = 0;
+  /** Seconds since the last shot (drives post-shot action cycles). */
+  private sinceShot = 99;
+  private recoilRoll = 0;
+  /** Alternates for akimbo / dual-slide weapons. */
+  private altHand = 0;
+  private idleTime = 0;
   private meleeSlashAnim: number = 0;
 
   // Muzzle Flash
@@ -1118,7 +1164,7 @@ export class WeaponSystem {
       g.add(cyl(0.028, 0.14, darkSteelMat, 0, 0.0, 0.18)); // grip wrap
       const arms = this.createOperatorArms([0.2, -0.22, -0.4], { right: [0, 0.0, 0.16], left: [0, 0.0, -0.05] });
       g.add(arms.armLeft, arms.armRight);
-      g.rotation.set(-0.35, 0.25, 0.1);
+      g.userData.baseRot = new THREE.Euler(-0.35, 0.25, 0.1);
       finish(g, 'sledge', [0.2, -0.22, -0.4]);
     }
 
@@ -1133,7 +1179,7 @@ export class WeaponSystem {
       g.add(box(0.03, 0.035, 0.14, darkSteelMat, 0, 0.03, 0.01)); // handle
       const arms = this.createOperatorArms([0.2, -0.22, -0.4], { right: [0, 0.03, 0.02] });
       g.add(arms.armRight);
-      g.rotation.set(0.1, -0.5, 0.2);
+      g.userData.baseRot = new THREE.Euler(0.1, -0.5, 0.2);
       finish(g, 'knife', [0.2, -0.22, -0.4]);
     }
   }
@@ -1149,6 +1195,8 @@ export class WeaponSystem {
     this.shotSequence = 0;
     this.equipTransition = 0.0; // Trigger snappy equip lift
     this.inspectT = -1;
+    this.sinceShot = 99;
+    this.recoilRoll = 0;
   }
 
   public canFire(): boolean {
@@ -1171,11 +1219,15 @@ export class WeaponSystem {
     }
     this.shotSequence++;
 
-    // CS2 / Rivals Recoil Pattern
+    // CS2 / Rivals Recoil Pattern, scaled by the weapon's handling profile
+    const feel = FEEL[this.currentWeapon];
     const sprayY = Math.sin(this.shotSequence * 0.8) * def.recoilKickYaw;
     this.recoilOffset.z += def.recoilKickZ;
-    this.recoilRot.x += def.recoilKickPitch;
+    this.recoilRot.x += def.recoilKickPitch * feel.riseMul;
     this.recoilRot.y += sprayY;
+    this.recoilRoll += feel.kickRoll * (this.shotSequence % 2 === 0 ? 1 : -0.6);
+    this.sinceShot = 0;
+    this.altHand ^= 1;
 
     if (isMeleeWeapon(this.currentWeapon)) {
       this.meleeSlashAnim = 1.0;
@@ -1272,31 +1324,54 @@ export class WeaponSystem {
       this.equipTransition = Math.min(1.0, this.equipTransition + dt * 5.0);
     }
 
-    // Melee Slash Animation
+    const feel = FEEL[this.currentWeapon];
+    // Mass 0.3 kg (knife) .. 7.5 kg (LMG) -> 0..1 heaviness
+    const heavy = THREE.MathUtils.clamp((feel.massKg - 1) / 6.5, 0, 1);
+    this.sinceShot += dt;
+    this.idleTime += dt;
+
+    // Melee swing animation: speed depends on the weapon (knife snaps, sledge follows through)
     if (this.meleeSlashAnim > 0) {
-      this.meleeSlashAnim = Math.max(0, this.meleeSlashAnim - dt * 4.5);
+      const swingSpeed = feel.melee === 'stab' ? 9.0 : feel.melee === 'overhead' ? 2.6 : 4.5;
+      this.meleeSlashAnim = Math.max(0, this.meleeSlashAnim - dt * swingSpeed);
     }
 
-    // Viewmodel Weapon Sway
-    const swayTargetX = -mouseDeltaX * 0.00045;
-    const swayTargetY = mouseDeltaY * 0.00045;
-    this.swayOffset.x = THREE.MathUtils.lerp(this.swayOffset.x, THREE.MathUtils.clamp(swayTargetX, -0.045, 0.045), dt * 12);
-    this.swayOffset.y = THREE.MathUtils.lerp(this.swayOffset.y, THREE.MathUtils.clamp(swayTargetY, -0.045, 0.045), dt * 12);
+    // Viewmodel sway: heavy weapons lag the view more and swing further
+    const swayGain = 0.00035 + heavy * 0.00035;
+    const swayLimit = 0.035 + heavy * 0.03;
+    const swayFollow = 16 - heavy * 9; // light = snappy, heavy = sluggish
+    const swayTargetX = -mouseDeltaX * swayGain;
+    const swayTargetY = mouseDeltaY * swayGain;
+    this.swayOffset.x = THREE.MathUtils.lerp(this.swayOffset.x, THREE.MathUtils.clamp(swayTargetX, -swayLimit, swayLimit), dt * swayFollow);
+    this.swayOffset.y = THREE.MathUtils.lerp(this.swayOffset.y, THREE.MathUtils.clamp(swayTargetY, -swayLimit, swayLimit), dt * swayFollow);
 
-    // Head bobbing & walking sway
+    // Walk cycle: figure-8 bob; heavier weapons bob lower and slower, melee bounces more
     if (horizontalSpeed > 0.5) {
-      this.bobTime += dt * (horizontalSpeed * 2.2);
+      this.bobTime += dt * (horizontalSpeed * (2.4 - heavy * 0.6));
     } else {
       this.bobTime += dt * 1.8;
     }
-    const bobFactor = horizontalSpeed > 0.5 ? 0.012 : 0.002;
-    const bobX = Math.cos(this.bobTime * 0.5) * bobFactor;
-    const bobY = Math.abs(Math.sin(this.bobTime)) * bobFactor;
+    const bobAmp = (horizontalSpeed > 0.5 ? 0.012 : 0.0) * (1.15 - heavy * 0.5) * (this.isADS ? 0.25 : 1);
+    const bobX = Math.cos(this.bobTime * 0.5) * bobAmp;
+    const bobY = Math.abs(Math.sin(this.bobTime)) * bobAmp;
+    // Idle breathing (always present, subtle; heavier guns breathe slower and lower)
+    const breathe = this.isADS ? 0.0008 : 0.0025;
+    const idleX = Math.sin(this.idleTime * (1.1 - heavy * 0.3)) * breathe;
+    const idleY = Math.sin(this.idleTime * (2.2 - heavy * 0.6)) * breathe * 0.8;
 
-    // Recoil recovery spring
-    this.recoilOffset.z = THREE.MathUtils.lerp(this.recoilOffset.z, 0, dt * 16);
-    this.recoilRot.x = THREE.MathUtils.lerp(this.recoilRot.x, 0, dt * 16);
-    this.recoilRot.y = THREE.MathUtils.lerp(this.recoilRot.y, 0, dt * 16);
+    // Recoil recovery: a light pistol snaps back, a heavy rifle settles slowly
+    const recover = 22 - heavy * 11;
+    this.recoilOffset.z = THREE.MathUtils.lerp(this.recoilOffset.z, 0, dt * recover);
+    this.recoilRot.x = THREE.MathUtils.lerp(this.recoilRot.x, 0, dt * recover * 0.9);
+    this.recoilRot.y = THREE.MathUtils.lerp(this.recoilRot.y, 0, dt * recover);
+    this.recoilRoll = THREE.MathUtils.lerp(this.recoilRoll, 0, dt * (recover * 0.7));
+
+    // Post-shot mechanical action on the named parts (slide / bolt / pump / belt ...)
+    const actMesh = this.weaponMeshes.get(this.currentWeapon);
+    if (actMesh && !this.isReloading) {
+      this.resetReloadParts(actMesh);
+      this.applyActionAnimation(actMesh, feel);
+    }
 
     // Alignment and visibility
     const targetMesh = this.weaponMeshes.get(this.currentWeapon);
@@ -1321,24 +1396,101 @@ export class WeaponSystem {
       // Equip lift from bottom-right
       const equipLift = (1.0 - this.equipTransition) * -0.22;
 
-      // Melee slash offset
-      const meleeSwipeX = this.meleeSlashAnim * 0.2;
-      const meleeSwipeRot = this.meleeSlashAnim * -0.8;
+      // Melee swing by style
+      const sw = this.meleeSlashAnim;              // 1 -> 0 over the swing
+      const arc = Math.sin(sw * Math.PI);          // 0 -> 1 -> 0
+      let meleeX = 0, meleeY = 0, meleeZ = 0, meleeRX = 0, meleeRY = 0, meleeRZ = 0;
+      if (feel.melee === 'stab') {                 // knife: fast forward thrust, slight twist
+        meleeZ = -0.22 * arc; meleeX = -0.04 * arc; meleeRZ = 0.5 * arc; meleeRX = 0.15 * arc;
+      } else if (feel.melee === 'overhead') {      // sledge: wind up over the shoulder, slam down, follow through
+        const wind = THREE.MathUtils.smoothstep(sw, 0.65, 1.0);          // early phase
+        const slam = THREE.MathUtils.smoothstep(1 - sw, 0.35, 0.8);      // later phase
+        meleeRX = 0.9 * wind - 1.5 * slam; meleeY = 0.12 * wind - 0.18 * slam; meleeZ = 0.1 * wind - 0.12 * slam; meleeRZ = -0.25 * slam;
+      } else if (feel.melee) {                      // katana: horizontal slash
+        meleeX = -0.2 * sw; meleeRY = -0.8 * sw; meleeRZ = 0.25 * arc;
+      }
+
+      const base = (targetMesh.userData.baseRot as THREE.Euler | undefined);
+      const bx = base?.x ?? 0, by = base?.y ?? 0, bz = base?.z ?? 0;
+      const follow = 22 - heavy * 8; // heavy weapons settle more slowly into every pose
 
       const rp = this.reloadPose;
-      targetMesh.position.x = THREE.MathUtils.lerp(targetMesh.position.x, restPos.x + this.swayOffset.x + bobX - meleeSwipeX + rp.pos.x, dt * 18);
-      targetMesh.position.y = THREE.MathUtils.lerp(targetMesh.position.y, restPos.y + this.swayOffset.y - bobY + equipLift + rp.pos.y, dt * 18);
-      targetMesh.position.z = THREE.MathUtils.lerp(targetMesh.position.z, restPos.z + this.recoilOffset.z + rp.pos.z, dt * 18);
+      targetMesh.position.x = THREE.MathUtils.lerp(targetMesh.position.x, restPos.x + this.swayOffset.x + bobX + idleX + meleeX + rp.pos.x, dt * follow);
+      targetMesh.position.y = THREE.MathUtils.lerp(targetMesh.position.y, restPos.y + this.swayOffset.y - bobY + idleY + equipLift + meleeY + rp.pos.y, dt * follow);
+      targetMesh.position.z = THREE.MathUtils.lerp(targetMesh.position.z, restPos.z + this.recoilOffset.z + meleeZ + rp.pos.z, dt * follow);
 
-      targetMesh.rotation.x = THREE.MathUtils.lerp(targetMesh.rotation.x, this.recoilRot.x + rp.rot.x, dt * 20);
-      targetMesh.rotation.y = THREE.MathUtils.lerp(targetMesh.rotation.y, this.recoilRot.y + this.swayOffset.x * 0.25 + meleeSwipeRot + rp.rot.y, dt * 20);
-      targetMesh.rotation.z = THREE.MathUtils.lerp(targetMesh.rotation.z, (isSliding ? -0.14 : 0) + rp.rot.z, dt * 20); // Dynamic slide banking tilt!
+      targetMesh.rotation.x = THREE.MathUtils.lerp(targetMesh.rotation.x, bx + this.recoilRot.x + meleeRX + rp.rot.x, dt * (follow + 2));
+      targetMesh.rotation.y = THREE.MathUtils.lerp(targetMesh.rotation.y, by + this.recoilRot.y + this.swayOffset.x * (0.25 + heavy * 0.3) + meleeRY + rp.rot.y, dt * (follow + 2));
+      targetMesh.rotation.z = THREE.MathUtils.lerp(targetMesh.rotation.z, bz + (isSliding ? -0.14 : 0) + this.recoilRoll + this.swayOffset.x * -0.6 + meleeRZ + rp.rot.z, dt * (follow + 2));
     }
   }
 
   // ---------------------------------------------------------------------------
   // Per-weapon reload animations
   // ---------------------------------------------------------------------------
+
+  /**
+   * Mechanical cycle after each shot, animated on the named parts of the viewmodel.
+   * Semi-autos cycle instantly; bolt/pump/break actions wait for the shooter's hand.
+   */
+  private applyActionAnimation(group: THREE.Group, feel: FeelProfile): void {
+    if (feel.action === 'none' || feel.actionDur <= 0) return;
+    // Single-shot launchers show an empty rail / tube until the reload seats a new projectile
+    if ((feel.action === 'rocket' || feel.action === 'crossbow') && this.ammoInMag[this.currentWeapon] <= 0) {
+      this.getReloadParts(group).get(feel.action === 'rocket' ? 'warhead' : 'bolt')?.forEach(e => { e.obj.visible = false; });
+    }
+    const t = this.sinceShot - feel.actionDelay;
+    if (t < 0 || t > feel.actionDur) return;
+    const p = t / feel.actionDur; // 0..1 through the cycle
+    const parts = this.getReloadParts(group);
+    const set = (name: string, fn: (o: THREE.Object3D, b: { pos: THREE.Vector3; rot: THREE.Euler }, i: number) => void) => {
+      parts.get(name)?.forEach((e, i) => fn(e.obj, e, i));
+    };
+    const pulse = Math.sin(p * Math.PI);
+    switch (feel.action) {
+      case 'slide': // slide flies back fast, returns under spring; dualies alternate hands
+        set('slide', (o, b, i) => {
+          if (parts.get('slide')!.length > 1 && i !== this.altHand) return;
+          const back = p < 0.35 ? p / 0.35 : 1 - (p - 0.35) / 0.65;
+          o.position.z = b.pos.z + 0.055 * back;
+        });
+        break;
+      case 'bolt': { // lift, pull back, push forward, lock down - whole rifle dips with the hand
+        const lift = THREE.MathUtils.smoothstep(p, 0.0, 0.18) - THREE.MathUtils.smoothstep(p, 0.8, 1.0);
+        const back = THREE.MathUtils.smoothstep(p, 0.18, 0.42) - THREE.MathUtils.smoothstep(p, 0.55, 0.78);
+        set('bolt', (o, b) => { o.rotation.z = b.rot.z + 1.1 * lift; o.position.z = b.pos.z + 0.09 * back; });
+        set('armRight', (o, b) => { o.position.z = b.pos.z + 0.09 * back; o.position.y = b.pos.y + 0.03 * lift; });
+        this.reloadPose.rot.z += -0.08 * lift;
+        this.reloadPose.rot.x += 0.05 * back;
+        break;
+      }
+      case 'pump': { // fore-end back then forward; off hand rides it
+        const back = p < 0.45 ? THREE.MathUtils.smoothstep(p, 0, 0.45) : 1 - THREE.MathUtils.smoothstep(p, 0.5, 1);
+        set('pump', (o, b) => { o.position.z = b.pos.z + 0.11 * back; });
+        set('armLeft', (o, b) => { o.position.z = b.pos.z + 0.11 * back; });
+        this.reloadPose.rot.x += 0.04 * back;
+        break;
+      }
+      case 'break': // double barrel: violent muzzle flip handled by riseMul; here the breech shudders
+        set('breech', (o, b) => { o.rotation.x = b.rot.x + 0.05 * pulse; });
+        break;
+      case 'belt': // belt box rattles, charging handle shivers
+        set('mag', (o, b) => { o.position.y = b.pos.y + 0.006 * Math.sin(p * Math.PI * 6); o.rotation.z = b.rot.z + 0.03 * pulse; });
+        set('bolt', (o, b) => { o.position.z = b.pos.z + 0.03 * pulse; });
+        break;
+      case 'revolver': // hammer falls, cylinder indexes one chamber
+        set('cylinder', (o, b) => { o.rotation.z = b.rot.z + (Math.PI / 3) * THREE.MathUtils.smoothstep(p, 0.3, 1.0); });
+        break;
+      case 'crossbow': // limbs snap forward, string thrums
+        set('bolt', (o) => { o.visible = p > 0.95; });
+        break;
+      case 'rocket': // launcher rocks back, smoke lingers; warhead gone until reload
+        set('warhead', (o) => { o.visible = false; });
+        this.reloadPose.rot.x += 0.12 * (1 - p);
+        this.reloadPose.pos.z += 0.06 * (1 - p);
+        break;
+    }
+  }
 
   private getReloadParts(group: THREE.Group): Map<string, { obj: THREE.Object3D; pos: THREE.Vector3; rot: THREE.Euler; scale: THREE.Vector3 }[]> {
     let cache = this.reloadPartCache.get(group);
