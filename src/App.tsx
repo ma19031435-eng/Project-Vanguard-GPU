@@ -23,6 +23,19 @@ import { SentinelAntiCheat } from './engine/anticheat/SentinelAntiCheat.ts';
 import { MainLobby, PauseOverlay, SessionMode } from './components/Lobby/MainLobby.tsx';
 import { Trophy } from 'lucide-react';
 import { loadSettings, saveSettings } from './engine/core/Settings.ts';
+import { MobileControls } from './components/HUD/MobileControls.tsx';
+
+/** Touch-first device heuristic; refined at runtime by the first real touch/mouse event and overridable with ?mobile=1|0. */
+const detectTouchDevice = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const q = new URLSearchParams(window.location.search).get('mobile');
+  if (q === '1') return true;
+  if (q === '0') return false;
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  const noHover = window.matchMedia?.('(hover: none)').matches ?? false;
+  const touchPoints = (navigator.maxTouchPoints ?? 0) > 0;
+  return touchPoints && (coarse || noHover);
+};
 
 const SAVED = loadSettings();
 
@@ -133,9 +146,27 @@ export default function App() {
   const [isWebGPU, setIsWebGPU] = useState(false);
   const webGPUCapable = typeof navigator !== 'undefined' && 'gpu' in navigator;
   const [mouseSens, setMouseSens] = useState(SAVED.mouseSens);
+  const mouseSensRef = useRef(SAVED.mouseSens);
+  mouseSensRef.current = mouseSens;
   const [fov, setFov] = useState(SAVED.fov);
   const [masterVol, setMasterVol] = useState(SAVED.masterVol);
   const [contextLost, setContextLost] = useState(false);
+  const [isMobile, setIsMobile] = useState<boolean>(() => detectTouchDevice());
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
+  const [mobilePlaying, setMobilePlaying] = useState(false);
+  const mobilePlayingRef = useRef(false);
+  mobilePlayingRef.current = mobilePlaying;
+
+  // Runtime refinement: a real touch enables mobile mode; a real mouse move (not synthesized from touch) disables it.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('mobile')) return;
+    const onTouch = () => setIsMobile(true);
+    const onPointer = (e: PointerEvent) => { if (e.pointerType === 'mouse' && e.isPrimary) setIsMobile(false); };
+    window.addEventListener('touchstart', onTouch, { passive: true, once: true });
+    window.addEventListener('pointermove', onPointer, { passive: true, once: true });
+    return () => { window.removeEventListener('touchstart', onTouch); window.removeEventListener('pointermove', onPointer); };
+  }, []);
   const [damageIndicators, setDamageIndicators] = useState<{ id: number; angle: number; time: number }[]>([]);
   const damageIdRef = useRef(0);
 
@@ -188,6 +219,8 @@ export default function App() {
     punchPitch: number;
     shakeAmp: number;
     targetFov: number;
+    touchMove: { x: number; y: number };
+    touchLook: { dx: number; dy: number };
     shakeTime: number;
     landingPunchY: number;
     footstepSoundTimer: number;
@@ -285,6 +318,12 @@ export default function App() {
 
   const requestPointerLock = useCallback(() => {
     const canvas = canvasRef.current;
+    if (isMobileRef.current) {
+      setMobilePlaying(true);
+      engineRef.current?.audioEngine.init();
+      engineRef.current?.audioEngine.resume();
+      return;
+    }
     if (!canvas || document.pointerLockElement === canvas) return;
     if (Date.now() - lastPointerLockExit.current < 1100) return;
     try {
@@ -647,6 +686,8 @@ export default function App() {
       punchPitch: 0,
       shakeAmp: 0,
       targetFov: fov,
+      touchMove: { x: 0, y: 0 },
+      touchLook: { dx: 0, dy: 0 },
       shakeTime: 0,
       landingPunchY: 0,
       footstepSoundTimer: 0,
@@ -755,6 +796,22 @@ export default function App() {
         if (keys.has('KeyS')) wishZ += 1;
         if (keys.has('KeyA')) wishX -= 1;
         if (keys.has('KeyD')) wishX += 1;
+        // Analog touch stick (overrides digital keys when active)
+        if (Math.abs(engine.touchMove.x) > 0 || Math.abs(engine.touchMove.y) > 0) {
+          wishX = THREE.MathUtils.clamp(engine.touchMove.x, -1, 1);
+          wishZ = THREE.MathUtils.clamp(-engine.touchMove.y, -1, 1);
+        }
+        // Touch look: accumulated since last frame; scaled so a full-width swipe ≈ 200°
+        if (engine.touchLook.dx !== 0 || engine.touchLook.dy !== 0) {
+          const tSens = (Math.PI * 1.1 / Math.max(window.innerWidth, 320)) * mouseSensRef.current;
+          engine.yaw -= engine.touchLook.dx * tSens;
+          engine.pitch -= engine.touchLook.dy * tSens;
+          engine.pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, engine.pitch));
+          engine.mouseDeltaX = engine.touchLook.dx;
+          engine.mouseDeltaY = engine.touchLook.dy;
+          engine.touchLook.dx = 0;
+          engine.touchLook.dy = 0;
+        }
       }
 
       const isCrouching = !engine.isDead && (keys.has('KeyC') || keys.has('ControlLeft'));
@@ -862,7 +919,7 @@ export default function App() {
       engine.weaponSystem.update(dt, engine.mouseDeltaX, engine.mouseDeltaY, horizSpeed);
 
       // Hold-to-spray for automatic weapons (fire() enforces the per-weapon RPM cadence)
-      if (fireHeldRef.current && !engine.isDead && document.pointerLockElement === canvasRef.current) {
+      if (fireHeldRef.current && !engine.isDead && (document.pointerLockElement === canvasRef.current || (isMobileRef.current && mobilePlayingRef.current))) {
         const heldDef = WEAPON_DEFINITIONS[engine.weaponSystem.currentWeapon];
         if (heldDef.isAutomatic && engine.weaponSystem.canFire()) handleFireRef.current();
       }
@@ -1544,6 +1601,43 @@ export default function App() {
 
   handleFireRef.current = handleFire;
 
+  // ---- Touch control bindings -------------------------------------------------
+  const mobileMove = useCallback((x: number, y: number) => {
+    const engine = engineRef.current; if (!engine) return;
+    engine.touchMove.x = Number.isFinite(x) ? x : 0;
+    engine.touchMove.y = Number.isFinite(y) ? y : 0;
+  }, []);
+  const mobileLook = useCallback((dx: number, dy: number) => {
+    const engine = engineRef.current; if (!engine) return;
+    engine.touchLook.dx += Number.isFinite(dx) ? dx : 0;
+    engine.touchLook.dy += Number.isFinite(dy) ? dy : 0;
+  }, []);
+  const mobileFireStart = useCallback(() => {
+    engineRef.current?.audioEngine.resume();
+    fireHeldRef.current = true;
+    handleFireRef.current();
+  }, []);
+  const mobileFireEnd = useCallback(() => { fireHeldRef.current = false; }, []);
+  const mobileKey = useCallback((code: string, down: boolean) => {
+    const engine = engineRef.current; if (!engine) return;
+    if (down) engine.keysDown.add(code); else engine.keysDown.delete(code);
+  }, []);
+  const mobileADS = useCallback((ads: boolean) => {
+    const engine = engineRef.current; if (!engine || engine.isDead) return;
+    engine.weaponSystem.isADS = ads;
+    setIsADS(ads);
+    engine.targetFov = ads ? fov * (WEAPON_DEFINITIONS[engine.weaponSystem.currentWeapon].adsZoom ?? 0.8) : fov;
+  }, [fov]);
+  const cycleWeapon = useCallback((dir: 1 | -1) => {
+    const engine = engineRef.current; if (!engine || engine.isDead) return;
+    const arsenal: WeaponType[] = ['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg', 'smg', 'revolver', 'crossbow'];
+    const curIdx = arsenal.indexOf(engine.weaponSystem.currentWeapon);
+    const nextW = arsenal[(curIdx + dir + arsenal.length) % arsenal.length];
+    engine.audioEngine.playWeaponSwitch();
+    engine.weaponSystem.switchWeapon(nextW);
+    setCurrentWeapon(nextW);
+  }, []);
+
   const applyPresetToEngine = useCallback((preset: GraphicsPreset) => {
     const engine = engineRef.current;
     if (!engine) return null;
@@ -1649,13 +1743,33 @@ export default function App() {
         />
       )}
 
-      {sessionMode && !isPointerLocked && !isPlayerDead && !settingsOpen && !shopOpen && !lobbyOpen && !roundWinner && (
+      {sessionMode && !(isMobile ? mobilePlaying : isPointerLocked) && !isPlayerDead && !settingsOpen && !shopOpen && !lobbyOpen && !roundWinner && (
         <PauseOverlay
           mode={sessionMode}
           onResume={requestPointerLock}
           onReturnToLobby={handleReturnToLobby}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenLobby={() => setLobbyOpen(true)}
+        />
+      )}
+
+      {sessionMode && isMobile && mobilePlaying && !settingsOpen && !shopOpen && !lobbyOpen && !roundWinner && (
+        <MobileControls
+          isADS={isADS}
+          weapon={currentWeapon}
+          ammo={ammo}
+          reserveAmmo={reserveAmmo}
+          isDead={isPlayerDead}
+          onMove={mobileMove}
+          onLook={mobileLook}
+          onFireStart={mobileFireStart}
+          onFireEnd={mobileFireEnd}
+          onADSToggle={mobileADS}
+          onJump={(d) => mobileKey('Space', d)}
+          onCrouch={(d) => mobileKey('KeyC', d)}
+          onReload={() => engineRef.current?.weaponSystem.reload()}
+          onCycleWeapon={cycleWeapon}
+          onPause={() => setMobilePlaying(false)}
         />
       )}
 

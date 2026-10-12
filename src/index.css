@@ -10,3 +10,13 @@ html, body, #root {
   user-select: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
+
+/* Touch devices: no pull-to-refresh, pinch zoom, or long-press callouts over the game canvas */
+html, body, #root {
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+canvas {
+  touch-action: none;
+}
