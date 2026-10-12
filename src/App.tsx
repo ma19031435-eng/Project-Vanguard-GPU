@@ -396,7 +396,7 @@ export default function App() {
 
     // 1. Real Earth Sunny Atmosphere (Outpost Mirage under bright blue skies)
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xb8ab98, 0.0028); // Warm desert haze (sky dome supplies the background)
+    scene.fog = new THREE.FogExp2(0xb9c0c4, 0.0022); // Warm desert haze (sky dome supplies the background)
 
     const camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.05, 3000);
     camera.rotation.order = 'YXZ'; // Strictly 'YXZ' to prevent any camera / crosshair roll tilt!
@@ -412,7 +412,7 @@ export default function App() {
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.42; // Sky dome is HDR; keep exposure conservative
+    renderer.toneMappingExposure = 0.95; // Sky dome is HDR; keep exposure conservative
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -429,10 +429,10 @@ export default function App() {
     }, 250);
 
     // 4. Real Earth Midday Sunlight + Warm Sky Reflections
-    const skyLight = new THREE.HemisphereLight(0x8fb8e8, 0xa08a66, 0.8);
+    const skyLight = new THREE.HemisphereLight(0x7fa6d6, 0x8d7a60, 0.9);
     scene.add(skyLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff1d6, 3.4);
+    const sunLight = new THREE.DirectionalLight(0xfff1d6, 2.6);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 4096;
     sunLight.shadow.mapSize.height = 4096;

@@ -289,9 +289,8 @@ export class GraphicsQualityManager {
       // Unthrottled pixel ratio scaling
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio * config.pixelRatio, 2.5));
       
-      // Tone mapping
+      // Tone mapping (exposure is owned by the render pipeline, not the preset)
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      this.renderer.toneMappingExposure = 1.05;
 
       // Shadow engine configuration
       this.renderer.shadowMap.enabled = true;

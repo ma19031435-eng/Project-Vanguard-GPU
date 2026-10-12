@@ -14,15 +14,13 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
 
 const CinematicShader = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     uTime: { value: 0 },
     uVignette: { value: 0.3 },
-    uAberration: { value: 0.0022 },
+    uAberration: { value: 0.0006 },
     uGrain: { value: 0.02 },
     uSaturation: { value: 1.08 },
     uContrast: { value: 1.08 }
@@ -75,7 +73,7 @@ export class CinematicPipeline {
   public bloom: UnrealBloomPass;
   public smaa: SMAAPass;
   public cinematic: ShaderPass;
-  public sky: Sky;
+  public sky: THREE.Mesh;
   public sunDirection = new THREE.Vector3();
 
   private renderer: THREE.WebGLRenderer;
@@ -92,34 +90,55 @@ export class CinematicPipeline {
     const w = window.innerWidth;
     const h = window.innerHeight;
 
-    // --- Physically based sky ---
-    this.sky = new Sky();
-    this.sky.scale.setScalar(4500);
-    const u = this.sky.material.uniforms;
-    u.turbidity.value = 10.0;
-    u.rayleigh.value = 1.6;
-    u.mieCoefficient.value = 0.0015; // small sun halo — keeps the sky near the sun readable
-    u.mieDirectionalG.value = 0.7;
-    scene.add(this.sky);
-
-    const elevation = THREE.MathUtils.degToRad(58); // high sun: out of the eye line
+    // --- Bounded-brightness gradient sky (no HDR blowout, small soft sun disc) ---
+    const elevation = THREE.MathUtils.degToRad(58);
     const azimuth = THREE.MathUtils.degToRad(145);
     this.sunDirection.setFromSphericalCoords(1, Math.PI / 2 - elevation, azimuth);
-    u.sunPosition.value.copy(this.sunDirection);
     sunLight.position.copy(this.sunDirection.clone().multiplyScalar(140));
 
-    // Lens flare on the sun
-    const flareTex = CinematicPipeline.makeFlareTexture();
-    const flare = new Lensflare();
-    flare.addElement(new LensflareElement(flareTex, 160, 0, new THREE.Color(0x8a7a60)));
-    flare.addElement(new LensflareElement(flareTex, 50, 0.35, new THREE.Color(0x5a4a30)));
-    flare.addElement(new LensflareElement(flareTex, 70, 0.6, new THREE.Color(0x30505a)));
-    flare.addElement(new LensflareElement(flareTex, 40, 0.85, new THREE.Color(0x5a4028)));
-    sunLight.add(flare);
+    const skyMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: {
+        uSun: { value: this.sunDirection.clone() },
+        uZenith: { value: new THREE.Color(0x2f5f9e) },
+        uHorizon: { value: new THREE.Color(0xb9c6d2) },
+        uGround: { value: new THREE.Color(0x8d7d66) }
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() {
+          vDir = normalize(position);
+          vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          gl_Position = p.xyww; // always on the far plane
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uSun, uZenith, uHorizon, uGround;
+        varying vec3 vDir;
+        void main() {
+          vec3 d = normalize(vDir);
+          float h = clamp(d.y, -1.0, 1.0);
+          vec3 col = h >= 0.0
+            ? mix(uHorizon, uZenith, pow(h, 0.55))
+            : mix(uHorizon, uGround, clamp(-h * 6.0, 0.0, 1.0));
+          float cosA = dot(d, normalize(uSun));
+          float disc = smoothstep(0.9993, 0.9998, cosA);        // ~1.3 deg sun disc
+          float glow = pow(max(cosA, 0.0), 180.0) * 0.35;        // tight, dim halo
+          col += vec3(1.0, 0.95, 0.85) * (disc * 1.6 + glow);
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+    this.sky = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), skyMat);
+    this.sky.scale.setScalar(2500);
+    this.sky.frustumCulled = false;
+    this.sky.renderOrder = -1000;
+    scene.add(this.sky);
 
     // Environment reflections from the sky
     this.pmrem = new THREE.PMREMGenerator(renderer);
-    this.pmrem.compileEquirectangularShader();
     this.refreshEnvironment();
 
     // --- Composer ---
@@ -143,22 +162,6 @@ export class CinematicPipeline {
     this.composer.addPass(this.smaa);
   }
 
-  private static makeFlareTexture(): THREE.Texture {
-    const c = document.createElement('canvas');
-    c.width = c.height = 256;
-    const ctx = c.getContext('2d')!;
-    const g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
-    g.addColorStop(0, 'rgba(255,255,255,1)');
-    g.addColorStop(0.2, 'rgba(255,245,220,0.6)');
-    g.addColorStop(0.5, 'rgba(255,220,160,0.12)');
-    g.addColorStop(1, 'rgba(255,200,120,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 256, 256);
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }
-
   public refreshEnvironment(): void {
     const skyScene = new THREE.Scene();
     skyScene.add(this.sky);
@@ -166,8 +169,7 @@ export class CinematicPipeline {
     this.envTarget = this.pmrem.fromScene(skyScene, 0.02);
     this.scene.add(this.sky); // re-attach after rendering into PMREM
     this.scene.environment = this.envTarget.texture;
-    // The sky is HDR-bright; keep IBL contribution modest so surfaces don't wash out.
-    this.scene.environmentIntensity = 0.15;
+    this.scene.environmentIntensity = 0.5;
   }
 
   public setSize(w: number, h: number): void {

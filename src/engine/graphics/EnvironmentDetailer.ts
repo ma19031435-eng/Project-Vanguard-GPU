@@ -202,12 +202,6 @@ export class EnvironmentDetailer {
     }
     this.scene.add(ring);
 
-    // Haze band near the horizon
-    const hazeGeo = new THREE.CylinderGeometry(420, 420, 70, 48, 1, true);
-    const hazeMat = new THREE.MeshBasicMaterial({ color: 0xe8dcc8, transparent: true, opacity: 0.22, side: THREE.BackSide, depthWrite: false });
-    const haze = new THREE.Mesh(hazeGeo, hazeMat);
-    haze.position.y = 20;
-    this.scene.add(haze);
   }
 
   // ------------------------------------------------------------------ walls
