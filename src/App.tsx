@@ -613,6 +613,24 @@ export default function App() {
       record.state.position = [nextState.position[0], nextState.position[1], nextState.position[2]];
       record.velocity = [nextState.velocity[0], nextState.velocity[1], nextState.velocity[2]];
       record.onGround = nextState.onGround;
+      antiCheatRef.current.observeSimulatedState(record.state.id, record.state.position, nextState.onGround);
+      antiCheatRef.current.setAlive(record.state.id, record.state.health > 0);
+    };
+    // SENTINEL: host-authoritative validation of every remote input + simulated result
+    const sentinel = antiCheatRef.current;
+    p2pNet.inputGate = (peerId, input) => {
+      const v = sentinel.inspectInput(peerId, input);
+      return { accept: v.accept, fire: v.fire, dt: v.dt, kick: v.kick };
+    };
+    p2pNet.onPeerJoined = (peerId, name) => sentinel.registerSubject(peerId, name);
+    p2pNet.onPeerLeft = (peerId) => sentinel.forgetSubject(peerId);
+    sentinel.onBlock = (peerId, rep) => {
+      p2pNet.kickPeer(peerId, `anti-cheat (${rep.recent.map(r => r.kind).slice(-3).join(', ')})`);
+      setChatMessages(prev => [...prev.slice(-40), { sender: 'SENTINEL', text: `${rep.name} removed for cheating (${rep.suspicion} suspicion).`, time: Date.now() }]);
+    };
+    sentinel.onViolation = (subjectId, v, trust) => {
+      if (subjectId === 'local' && trust !== 'CLEAN') setAntiCheatStatus(trust === 'SUSPECT' ? 'WARNING' : 'FLAGGED');
+      if (trust === 'FLAGGED' || trust === 'BLOCKED') console.warn(`[SENTINEL] ${subjectId} ${v.kind}: ${v.detail}`);
     };
     p2pNet.hostRoom().catch(() => { /* status surfaced via onStatusChange */ });
 

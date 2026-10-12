@@ -144,6 +144,13 @@ export class P2PNetworkEngine {
   public onPlayerLeft?: (playerId: string) => void;
   public onChatMessage?: (sender: string, text: string) => void;
   public onStatusChange?: (status: NetworkStatus, event: NetworkEvent) => void;
+  /**
+   * Host-side input gate (SENTINEL). Receives the parsed packet, returns a sanitised verdict.
+   * If absent, inputs are accepted after basic clamping.
+   */
+  public inputGate?: (peerId: string, input: PlayerInputPacket) => { accept: boolean; fire: boolean; dt: number; kick: boolean };
+  public onPeerJoined?: (peerId: string, name: string) => void;
+  public onPeerLeft?: (peerId: string) => void;
   /** Host-only: authoritative movement step supplied by the game (physics lives outside netcode). */
   public simulateRemoteInput?: (record: RemotePlayerRecord, input: PlayerInputPacket) => void;
 
@@ -339,6 +346,7 @@ export class P2PNetworkEngine {
         });
         this.onPlayerJoined?.(conn.peer, name);
         this.onStatusChange?.(this.status, { level: 'info', text: `${name} joined the room.` });
+        this.onPeerJoined?.(conn.peer, name);
 
         conn.send({ type: 'welcome', assignedId: conn.peer, serverTick: this.currentTick });
       });
@@ -367,6 +375,7 @@ export class P2PNetworkEngine {
         this.remotePlayers.delete(conn.peer);
         this.onPlayerLeft?.(conn.peer);
         this.onStatusChange?.(this.status, { level: 'warn', text: `${rec?.state.name || conn.peer} left the room.` });
+        this.onPeerLeft?.(conn.peer);
       };
       conn.on('close', drop);
       conn.on('error', drop);
@@ -398,6 +407,8 @@ export class P2PNetworkEngine {
         }
       } else if (data.type === 'chat') {
         this.onChatMessage?.(data.sender, data.text);
+      } else if (data.type === 'kicked') {
+        this.onStatusChange?.('disconnected', { level: 'error', text: `Disconnected by host: ${typeof data.reason === 'string' ? data.reason.slice(0, 120) : 'removed'}` });
       }
     });
 
@@ -553,6 +564,16 @@ export class P2PNetworkEngine {
       dt
     };
 
+    // SENTINEL gate: schema, flood, time-dilation, aim/fire signatures
+    if (this.inputGate) {
+      const verdict = this.inputGate(peerId, input);
+      if (verdict.kick) { this.kickPeer(peerId, 'Removed by SENTINEL anti-cheat'); return; }
+      if (!verdict.accept) return;
+      input.fire = verdict.fire;
+      input.dt = Math.min(Math.max(verdict.dt, 0), 0.05);
+      if (input.dt <= 0) return;
+    }
+
     rec.lastInputTick = tick;
     rec.lastInputAt = performance.now();
     rec.state.lastAcknowledgedTick = tick;
@@ -572,6 +593,19 @@ export class P2PNetworkEngine {
       rec.state.position[0] = clamp(rec.state.position[0] + (fx * input.moveForward + rx * input.moveRight) * speed * dt, -48, 48);
       rec.state.position[2] = clamp(rec.state.position[2] + (fz * input.moveForward + rz * input.moveRight) * speed * dt, -48, 48);
     }
+  }
+
+  /** Host: disconnect a peer and drop its state. Safe to call for unknown ids. */
+  public kickPeer(peerId: string, reason: string): void {
+    if (!this.isHost) return;
+    const conn = this.connections.get(peerId);
+    const rec = this.remotePlayers.get(peerId);
+    try { conn?.send({ type: 'kicked', reason }); } catch { /* ignore */ }
+    try { conn?.close(); } catch { /* ignore */ }
+    this.connections.delete(peerId);
+    this.remotePlayers.delete(peerId);
+    this.onPeerLeft?.(peerId);
+    this.onStatusChange?.(this.status, { level: 'warn', text: `${rec?.state.name || peerId} was removed: ${reason}` });
   }
 
   public sendChatMessage(text: string, senderName: string): void {
