@@ -22,6 +22,11 @@ export interface QualityConfig {
   anisotropy: number;
   msaaSamples: number;
   deferredLighting: boolean;
+  /** Nearest-N point / spot lights kept active (fixed per tier so shader variants never change). */
+  activePointLights: number;
+  activeSpotLights: number;
+  /** Render-target budget in megapixels. Caps supersampling on very dense displays where it is imperceptible. */
+  maxRenderMegapixels: number;
 }
 
 export const GRAPHICS_PRESETS: Record<GraphicsPreset, QualityConfig> = {
@@ -39,7 +44,10 @@ export const GRAPHICS_PRESETS: Record<GraphicsPreset, QualityConfig> = {
     maxComputeParticles: 5000,
     anisotropy: 2,
     msaaSamples: 1,
-    deferredLighting: false
+    deferredLighting: false,
+    activePointLights: 4,
+    activeSpotLights: 2,
+    maxRenderMegapixels: 1.8
   },
   medium: {
     preset: 'medium',
@@ -55,7 +63,10 @@ export const GRAPHICS_PRESETS: Record<GraphicsPreset, QualityConfig> = {
     maxComputeParticles: 50000,
     anisotropy: 4,
     msaaSamples: 2,
-    deferredLighting: true
+    deferredLighting: true,
+    activePointLights: 8,
+    activeSpotLights: 4,
+    maxRenderMegapixels: 3.0
   },
   high: {
     preset: 'high',
@@ -71,7 +82,10 @@ export const GRAPHICS_PRESETS: Record<GraphicsPreset, QualityConfig> = {
     maxComputeParticles: 250000,
     anisotropy: 8,
     msaaSamples: 4,
-    deferredLighting: true
+    deferredLighting: true,
+    activePointLights: 12,
+    activeSpotLights: 6,
+    maxRenderMegapixels: 5.0
   },
   ultra: {
     preset: 'ultra',
@@ -87,7 +101,10 @@ export const GRAPHICS_PRESETS: Record<GraphicsPreset, QualityConfig> = {
     maxComputeParticles: 1000000,
     anisotropy: 16,
     msaaSamples: 8,
-    deferredLighting: true
+    deferredLighting: true,
+    activePointLights: 64,
+    activeSpotLights: 32,
+    maxRenderMegapixels: 9.5
   },
   overdrive: {
     preset: 'overdrive',
@@ -103,7 +120,10 @@ export const GRAPHICS_PRESETS: Record<GraphicsPreset, QualityConfig> = {
     maxComputeParticles: 1500000,
     anisotropy: 16,
     msaaSamples: 8,
-    deferredLighting: true
+    deferredLighting: true,
+    activePointLights: 64,
+    activeSpotLights: 32,
+    maxRenderMegapixels: 14
   }
 };
 
@@ -276,6 +296,20 @@ export class GraphicsQualityManager {
     }
   }
 
+  /**
+   * Preset pixel ratio with a physical sanity cap. On small, very dense screens (3x phones)
+   * anything beyond ~2x device pixels is imperceptible, and total render pixels are capped per
+   * tier so a 4K / 3x display cannot quietly quadruple the fill cost for no visible gain.
+   */
+  public static computePixelRatio(config: QualityConfig): number {
+    const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+    const shortSide = Math.min(w, h);
+    const baseDpr = Math.min(window.devicePixelRatio || 1, shortSide < 900 ? 2 : 3);
+    const wanted = baseDpr * config.pixelRatio;
+    const budgetCap = Math.sqrt((config.maxRenderMegapixels * 1e6) / (w * h));
+    return Math.max(0.5, Math.min(wanted, budgetCap, 2.5));
+  }
+
   public attachRenderer(renderer: THREE.WebGLRenderer) {
     this.renderer = renderer;
     this.applyConfiguration(this.currentConfig.preset);
@@ -286,12 +320,10 @@ export class GraphicsQualityManager {
     this.currentConfig = { ...config };
 
     if (this.renderer) {
-      // Unthrottled pixel ratio scaling
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio * config.pixelRatio, 2.5));
+      this.renderer.setPixelRatio(GraphicsQualityManager.computePixelRatio(config));
       
-      // Tone mapping
+      // Tone mapping (exposure is owned by the render pipeline, not the preset)
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      this.renderer.toneMappingExposure = 1.05;
 
       // Shadow engine configuration
       this.renderer.shadowMap.enabled = true;
@@ -327,19 +359,9 @@ export class GraphicsQualityManager {
     const currentFps = Math.round(1000 / (avgDelta || 16.6));
 
     if (this.currentConfig.preset === 'overdrive') {
-      if (currentFps < 90 && !this.autoCascadeThrottleActive) {
-        // Cascade downscale non-critical visual passes
-        this.autoCascadeThrottleActive = true;
-        if (this.renderer) {
-          this.renderer.setPixelRatio(window.devicePixelRatio * 1.0);
-        }
-      } else if (currentFps >= 100 && this.autoCascadeThrottleActive) {
-        // Restore full unrestricted overdrive
-        this.autoCascadeThrottleActive = false;
-        if (this.renderer) {
-          this.renderer.setPixelRatio(window.devicePixelRatio * this.currentConfig.pixelRatio);
-        }
-      }
+      // Resolution is owned by the runtime governor (AdaptiveQuality); this only reports state.
+      if (currentFps < 90 && !this.autoCascadeThrottleActive) this.autoCascadeThrottleActive = true;
+      else if (currentFps >= 100 && this.autoCascadeThrottleActive) this.autoCascadeThrottleActive = false;
     }
 
     return {

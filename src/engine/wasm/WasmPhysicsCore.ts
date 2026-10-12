@@ -63,6 +63,7 @@ export class WasmPhysicsCore {
   public static readonly EYE_HEIGHT_STAND = 1.62; // eye level
   public static readonly EYE_HEIGHT_CROUCH = 1.15;
   public static readonly EYE_HEIGHT_SLIDE = 0.82; // Low sleek slide height
+  public static readonly STEP_HEIGHT = 0.55; // Auto step-up onto ledges & ramp segments
 
   /**
    * Authoritative sub-millisecond raycast against target bounding box / hitboxes.
@@ -347,26 +348,18 @@ export class WasmPhysicsCore {
     }
 
     // 3. World Collision & Step Resolution
-    const targetY = py + vy * dt;
-    if (targetY <= 0) {
-      if (!onGround && vy < -4.0) {
-        landingShock = true;
-      }
-      py = 0;
-      vy = 0;
-      onGround = true;
-    } else {
-      py = targetY;
-    }
+    const playerRadius = 0.38;
+    const playerHeight = currentEyeHeight + 0.15;
+    const stepHeight = WasmPhysicsCore.STEP_HEIGHT;
 
     let targetX = px + vx * dt;
     let targetZ = pz + vz * dt;
-    const playerRadius = 0.38;
-    const playerHeight = currentEyeHeight + 0.15;
 
     for (let i = 0; i < worldBoxes.length; i++) {
       const b = worldBoxes[i];
       if (py + playerHeight < b.minY || py > b.maxY) continue;
+      // Low ledges / ramp steps are climbable: resolved by the surface pass below instead of blocking.
+      if (b.maxY <= py + stepHeight && b.minY <= py + stepHeight) continue;
 
       // X collision
       if (
@@ -390,6 +383,34 @@ export class WasmPhysicsCore {
         if (pz < b.minZ) targetZ = b.minZ - playerRadius;
         else if (pz > b.maxZ) targetZ = b.maxZ + playerRadius;
         vz = 0;
+      }
+    }
+
+    // Elevated surfaces: find the highest walkable top beneath/around the feet (platforms, catwalks, ramps).
+    let groundY = 0;
+    for (let i = 0; i < worldBoxes.length; i++) {
+      const b = worldBoxes[i];
+      if (
+        targetX + playerRadius * 0.6 > b.minX && targetX - playerRadius * 0.6 < b.maxX &&
+        targetZ + playerRadius * 0.6 > b.minZ && targetZ - playerRadius * 0.6 < b.maxZ
+      ) {
+        if (b.maxY <= py + stepHeight && b.maxY > groundY) groundY = b.maxY;
+      }
+    }
+
+    const targetY = py + vy * dt;
+    if (targetY <= groundY && (onGround || vy <= 0)) {
+      if (!onGround && vy < -4.0) {
+        landingShock = true;
+      }
+      py = groundY;
+      vy = 0;
+      onGround = true;
+    } else {
+      py = targetY;
+      if (py > groundY + 0.02 && onGround && vy <= 0) {
+        // Walked off an edge
+        onGround = false;
       }
     }
 

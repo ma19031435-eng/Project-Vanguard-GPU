@@ -3,13 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Crosshair, Shield, Heart, Zap, Terminal, Trophy, 
-  Settings, Users, Radio, Activity, Cpu, Sparkles,
-  ShoppingBag, Coins, ShieldCheck, Flame, Sword, Bot
-} from 'lucide-react';
-import { WeaponType, WEAPON_DEFINITIONS } from '../../engine/weapons/WeaponSystem.ts';
+import React, { useState, useEffect } from 'react';
+import { Trophy, Flame, Sword, Settings, Users, Coins, Bot, ShieldCheck } from 'lucide-react';
+import { WeaponType, WEAPON_DEFINITIONS , Loadout, DEFAULT_LOADOUT } from '../../engine/weapons/WeaponSystem.ts';
 import { PlayerNetState } from '../../engine/netcode/P2PNetworkEngine.ts';
 import { GraphicsPreset } from '../../engine/webgpu/WebGPUPipeline.ts';
 
@@ -49,14 +45,14 @@ interface TacticalHUDProps {
   allPlayers: PlayerNetState[];
   fps: number;
   frameTimeMs: number;
+  renderResLabel?: string;
   latencyMs: number;
   activeParticles: number;
+  damageIndicators?: { id: number; angle: number; time: number }[];
   preset: GraphicsPreset;
   isWebGPU: boolean;
   isHost: boolean;
   roomId: string;
-  onSendChat: (text: string) => void;
-  chatMessages: { sender: string; text: string; time: number }[];
   onOpenSettings: () => void;
   onOpenLobby: () => void;
   currentSpeed: number;
@@ -81,6 +77,12 @@ interface TacticalHUDProps {
   onOpenShop?: () => void;
   killStreak?: number;
   onSelectWeaponSlot?: (weapon: WeaponType) => void;
+  loadout?: Loadout;
+  onChangeLoadout?: () => void;
+  kills?: number;
+  deaths?: number;
+  targetKills?: number;
+  presetAuto?: boolean;
 }
 
 export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }> = ({
@@ -100,15 +102,13 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   playerYaw,
   allPlayers,
   fps,
-  frameTimeMs,
+  renderResLabel,
   latencyMs,
-  activeParticles,
+  damageIndicators = [],
   preset,
   isWebGPU,
   isHost,
   roomId,
-  onSendChat,
-  chatMessages,
   onOpenSettings,
   onOpenLobby,
   currentSpeed = 0,
@@ -132,655 +132,391 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   onToggleBots,
   onOpenShop,
   killStreak = 0,
-  onSelectWeaponSlot
+  onSelectWeaponSlot,
+  loadout,
+  onChangeLoadout,
+  kills,
+  deaths,
+  targetKills = 10,
+  presetAuto = false,
 }) => {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState('');
-  const chatBottomRef = useRef<HTMLDivElement>(null);
-
-  // Tab key for leaderboard, Enter for chat
+  const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Tab') {
-        e.preventDefault();
-        setShowLeaderboard(prev => !prev);
-      } else if (e.code === 'Enter') {
-        if (!chatOpen) {
-          setChatOpen(true);
-        } else if (chatInput.trim()) {
-          onSendChat(chatInput);
-          setChatInput('');
-          setChatOpen(false);
-        } else {
-          setChatOpen(false);
-        }
-      } else if (e.code === 'Escape' && chatOpen) {
-        setChatOpen(false);
-      } else if (e.code === 'KeyB' && !chatOpen) {
-        e.preventDefault();
-        onOpenShop?.();
-      }
+    if (damageIndicators.length === 0) return;
+    let raf = 0;
+    const loop = () => { setNowTick(Date.now()); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [damageIndicators.length]);
+  const liveIndicators = damageIndicators.filter(d => nowTick - d.time < 1400);
+  const recentHit = liveIndicators.length > 0 ? Math.max(0, 1 - (nowTick - liveIndicators[liveIndicators.length - 1].time) / 600) : 0;
+
+  // Tab = scoreboard (hold or toggle), B = armory
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Tab') { e.preventDefault(); setShowLeaderboard(true); }
+      else if (e.code === 'KeyB') { e.preventDefault(); onOpenShop?.(); }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [chatOpen, chatInput, onSendChat]);
-
-  useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+    const up = (e: KeyboardEvent) => { if (e.code === 'Tab') setShowLeaderboard(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, [onOpenShop]);
 
   const currentWeaponDef = WEAPON_DEFINITIONS[weapon];
-  const crosshairGap = Math.max(8, Math.min(36, spreadBloom * 240));
+  const local = allPlayers.find(p => p.id === 'local');
+  const myKills = kills ?? local?.kills ?? 0;
+  const myDeaths = deaths ?? local?.deaths ?? 0;
+  const topEnemy = allPlayers.filter(p => p.id !== 'local').reduce((m, p) => Math.max(m, p.kills), 0);
+  const crosshairGap = Math.max(6, Math.min(30, spreadBloom * 220));
+  const moving = currentSpeed > 0.8;
+  const lowAmmo = !currentWeaponDef.isMelee && ammo <= Math.max(1, Math.ceil(currentWeaponDef.magazineSize * 0.25));
+  const hpPct = Math.max(0, Math.min(100, health));
+  const armorPct = Math.max(0, Math.min(100, armor));
+  const lo = loadout ?? DEFAULT_LOADOUT;
+  const arsenal: WeaponType[] = [lo.primary, lo.secondary, lo.melee];
+  const shortNames: Record<WeaponType, string> = {
+    rifle: 'AK', railgun: 'AWP', shotgun: 'SPAS', pistol: 'DE', melee: 'BLADE', rpg: 'RPG', smg: 'SMG', revolver: 'REV', crossbow: 'BOW',
+    lmg: 'LMG', dmr: 'DMR', scattergun: 'TWIN', autopistol: 'VIPER', dualies: 'AKIMBO', sledge: 'SLEDGE', knife: 'KNIFE'
+  };
+
+  // Shared surfaces — soft gradient panels instead of boxed cards
+  const panelL = 'bg-gradient-to-r from-black/70 via-black/45 to-transparent';
+  const panelR = 'bg-gradient-to-l from-black/70 via-black/45 to-transparent';
+  const label = 'text-[10px] font-semibold tracking-[0.18em] text-white/45 uppercase';
+  const num = 'tabular-nums';
 
   return (
-    <div className="absolute inset-0 pointer-events-none select-none overflow-hidden font-mono text-xs">
-      {/* 1. Low Health Red Blood Pulse Vignette */}
+    <div className="absolute inset-0 pointer-events-none select-none overflow-hidden text-white hud-font">
+      {/* ---------- Full-screen feedback layers ---------- */}
       {health < 35 && (
-        <div 
-          className="absolute inset-0 pointer-events-none animate-pulse" 
-          style={{
-            background: `radial-gradient(circle, transparent 40%, rgba(220, 20, 60, ${0.45 * (1 - health / 35)}))`
-          }}
-        />
+        <div className="absolute inset-0 pointer-events-none animate-pulse"
+          style={{ background: `radial-gradient(ellipse at center, transparent 45%, rgba(190, 18, 40, ${0.5 * (1 - health / 35)}))` }} />
       )}
+      {recentHit > 0 && (
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ background: `radial-gradient(ellipse at center, transparent 48%, rgba(255, 40, 40, ${0.35 * recentHit}))` }} />
+      )}
+      {/* Subtle vignette for legibility against the bright sky */}
+      <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.28) 100%)' }} />
 
-      {/* Top-Center: Rank, Coins, Armory Shop & Anti-Cheat */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3">
-        {/* CS2 / Rivals Rank & XP Progression Bar */}
-        <div className="p-2.5 bg-black/80 backdrop-blur-md border border-amber-500/40 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px]">
-          {/* Rank Badge */}
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center font-black text-black text-xs shadow-[0_0_12px_rgba(245,158,11,0.5)]">
-              {level}
+      {/* Directional damage arcs */}
+      <div className="absolute left-1/2 top-1/2 w-0 h-0 pointer-events-none">
+        {liveIndicators.map((d) => {
+          const age = (nowTick - d.time) / 1400;
+          const alpha = age < 0.15 ? age / 0.15 : 1 - (age - 0.15) / 0.85;
+          return (
+            <div key={d.id} className="absolute left-0 top-0" style={{ transform: `rotate(${(d.angle * 180) / Math.PI}deg)`, opacity: Math.max(0, alpha) }}>
+              <div className="absolute" style={{
+                left: -40, top: -140, width: 80, height: 34,
+                background: 'radial-gradient(ellipse at 50% 100%, rgba(255,70,70,0.95) 0%, rgba(255,70,70,0.45) 50%, transparent 74%)',
+                clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)', filter: 'drop-shadow(0 0 6px rgba(255,0,0,0.7))' }} />
             </div>
-            <div>
-              <div className="text-[10px] text-amber-400/80 font-bold tracking-wider">RANK {level}</div>
-              <div className="text-xs font-black text-white">{rankName}</div>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="flex-1">
-            <div className="flex justify-between text-[10px] text-zinc-300 font-semibold mb-1">
-              <span className="text-amber-400">{xp} XP</span>
-              <span className="text-zinc-500">{xpToNextLevel} XP</span>
-            </div>
-            <div className="w-full h-2 bg-zinc-900 rounded-full overflow-hidden border border-amber-900/60 p-[1px]">
-              <div
-                className="h-full bg-gradient-to-r from-amber-500 to-yellow-300 rounded-full transition-all duration-300 shadow-[0_0_8px_#f59e0b]"
-                style={{ width: `${Math.min(100, Math.max(0, (xp / xpToNextLevel) * 100))}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Rival Coins Counter & Shop Quick-Button */}
-        <button
-          onClick={onOpenShop}
-          className="pointer-events-auto p-2.5 bg-black/80 hover:bg-zinc-900/90 backdrop-blur-md border border-amber-500/50 rounded-xl flex items-center gap-2.5 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.25)] transition group cursor-pointer"
-        >
-          <Coins className="w-5 h-5 text-amber-400 group-hover:scale-110 transition" />
-          <div className="text-left">
-            <div className="text-[9px] text-zinc-400 font-bold">RIVAL COINS</div>
-            <div className="text-xs font-black text-amber-300">{coins.toLocaleString()} ⛁</div>
-          </div>
-          <span className="ml-1 px-2 py-0.5 rounded bg-amber-500 text-black font-black text-[10px] group-hover:bg-amber-400 transition">
-            [B] SHOP
-          </span>
-        </button>
-
-        {/* Bots Togglable Quick Switch */}
-        <button
-          onClick={onToggleBots}
-          title="Click to enable/disable AI bots"
-          className={`pointer-events-auto p-2.5 backdrop-blur-md border rounded-xl flex items-center gap-2 transition cursor-pointer ${
-            botsEnabled
-              ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.2)]'
-              : 'bg-zinc-900/80 border-zinc-700 text-zinc-400'
-          }`}
-        >
-          <Bot className="w-4 h-4" />
-          <div className="text-left">
-            <div className="text-[9px] text-zinc-400 font-bold">BOT SIM</div>
-            <div className="text-[11px] font-black">{botsEnabled ? 'ENABLED [ON]' : 'DISABLED [OFF]'}</div>
-          </div>
-        </button>
-
-        {/* Sentinel Anti-Cheat Security Shield */}
-        <div className="p-2.5 bg-black/80 backdrop-blur-md border border-cyan-500/40 rounded-xl flex items-center gap-2 text-cyan-300 shadow-[0_0_12px_rgba(0,229,255,0.2)]">
-          <ShieldCheck className="w-4 h-4 text-cyan-400" />
-          <div className="text-left text-[9px]">
-            <div className="text-zinc-400 font-bold">SENTINEL AC</div>
-            <div className="font-black text-cyan-300">{antiCheatStatus} {antiCheatViolations > 0 ? `(${antiCheatViolations}!)` : ''}</div>
-          </div>
-        </div>
+          );
+        })}
       </div>
 
-      {/* Real-time Floating XP Gain Toasts */}
-      <div className="absolute top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none z-50">
-        {xpGains.map(g => (
-          <div
-            key={g.id}
-            className="py-1 px-3 bg-amber-500 text-black font-black text-xs rounded-full shadow-[0_0_15px_#f59e0b] animate-bounce flex items-center gap-1.5"
-          >
-            <span>+{g.amount} XP</span>
-            <span className="text-[10px] bg-black/20 px-1 rounded">{g.reason}</span>
-          </div>
-        ))}
-
-        {levelUpNotification && (
-          <div className="py-2 px-5 bg-gradient-to-r from-yellow-400 via-amber-500 to-orange-500 text-black font-black text-sm rounded-xl shadow-[0_0_25px_#f59e0b] animate-pulse">
-            ★ RANK PROMOTION: {levelUpNotification}! ★
-          </div>
-        )}
-      </div>
-
-      {/* 2. Top-Left: Tactical Radar / Minimap */}
-      <div className="absolute top-4 left-4 p-3 bg-black/65 backdrop-blur-md border border-cyan-500/30 rounded-lg shadow-2xl">
-        <div className="flex items-center justify-between mb-2 pb-1 border-b border-cyan-500/20 text-cyan-400">
-          <div className="flex items-center gap-1.5 font-bold tracking-wider text-[11px]">
-            <Radio className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
-            <span>RADAR COMPASS</span>
-          </div>
-          <span className="text-[10px] text-cyan-300/70">
-            {Math.round(((-playerYaw * 180) / Math.PI + 360) % 360)}°
-          </span>
-        </div>
-
-        {/* Circular Radar Canvas */}
-        <div className="relative w-32 h-32 rounded-full border border-cyan-500/40 bg-zinc-950/80 overflow-hidden flex items-center justify-center">
-          {/* Radar Sweep Arc */}
-          <div 
-            className="absolute inset-0 rounded-full border-t border-cyan-400/50 animate-spin"
-            style={{ animationDuration: '3s' }}
-          />
-
-          {/* Grid lines */}
-          <div className="absolute w-full h-[1px] bg-cyan-500/20" />
-          <div className="absolute h-full w-[1px] bg-cyan-500/20" />
-          <div className="absolute w-20 h-20 rounded-full border border-cyan-500/20" />
-
-          {/* Local player center blip */}
-          <div 
-            className="w-2.5 h-2.5 bg-cyan-400 rounded-full z-10 shadow-[0_0_8px_#00e5ff] relative"
-            style={{ transform: `rotate(${-playerYaw}rad)` }}
-          >
-            {/* Direction pointer */}
-            <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[3px] border-r-[3px] border-b-[5px] border-l-transparent border-r-transparent border-b-cyan-300" />
-          </div>
-
-          {/* Remote Entities Blips */}
+      {/* ---------- Top-left: radar ---------- */}
+      <div className="absolute top-4 left-4 flex items-start gap-3">
+        <div className="relative w-[124px] h-[124px] rounded-full border border-white/15 bg-black/45 backdrop-blur-sm shadow-[0_8px_30px_rgba(0,0,0,0.45)] overflow-hidden">
+          <div className="absolute inset-0 rounded-full" style={{ background: 'radial-gradient(circle at center, rgba(34,211,238,0.10) 0%, transparent 70%)' }} />
+          <div className="absolute inset-0 rounded-full animate-spin" style={{ animationDuration: '4s', background: 'conic-gradient(from 0deg, rgba(34,211,238,0.22), transparent 25%)' }} />
+          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/10" />
+          <div className="absolute top-1/2 left-0 right-0 h-px bg-white/10" />
+          <div className="absolute inset-[26%] rounded-full border border-white/10" />
+          {/* enemies */}
           {allPlayers.map((p) => {
             if (p.id === 'local') return null;
-            // Relative coordinates
-            const relX = (p.position[0] - playerPos[0]) * 1.4;
-            const relZ = (p.position[2] - playerPos[2]) * 1.4;
-            // Rotate matching player yaw
-            const cos = Math.cos(playerYaw);
-            const sin = Math.sin(playerYaw);
-            const rotatedX = relX * cos - relZ * sin;
-            const rotatedY = relX * sin + relZ * cos;
-
-            if (Math.hypot(rotatedX, rotatedY) > 60) return null;
-
+            const relX = (p.position[0] - playerPos[0]) * 1.3;
+            const relZ = (p.position[2] - playerPos[2]) * 1.3;
+            const cos = Math.cos(playerYaw), sin = Math.sin(playerYaw);
+            const rx = relX * cos - relZ * sin;
+            const ry = relX * sin + relZ * cos;
+            const dist = Math.hypot(rx, ry);
+            if (dist > 56) return null;
             return (
-              <div
-                key={p.id}
-                className={`absolute w-2 h-2 rounded-full z-10 ${p.health <= 0 ? 'bg-zinc-600' : 'bg-red-500 shadow-[0_0_6px_#ef4444]'}`}
-                style={{
-                  transform: `translate(${rotatedX}px, ${rotatedY}px)`
-                }}
-              />
+              <div key={p.id} className={`absolute left-1/2 top-1/2 w-2 h-2 -ml-1 -mt-1 rounded-full ${p.health <= 0 ? 'bg-white/25' : 'bg-red-500 shadow-[0_0_6px_#ef4444]'}`}
+                style={{ transform: `translate(${rx}px, ${ry}px)` }} />
             );
           })}
+          {/* self */}
+          <div className="absolute left-1/2 top-1/2 -ml-[5px] -mt-[5px] w-[10px] h-[10px]">
+            <div className="w-0 h-0 border-l-[5px] border-r-[5px] border-b-[10px] border-l-transparent border-r-transparent border-b-cyan-300 drop-shadow-[0_0_4px_#22d3ee]" />
+          </div>
+          <div className="absolute inset-x-0 bottom-1 text-center text-[9px] text-white/50 tabular-nums">{Math.round(((-playerYaw * 180) / Math.PI + 360) % 360)}°</div>
         </div>
-
-        {/* Coordinates */}
-        <div className="mt-2 text-[10px] text-zinc-400 flex justify-between">
-          <span>X: {playerPos[0].toFixed(1)}</span>
-          <span>Y: {playerPos[1].toFixed(1)}</span>
-          <span>Z: {playerPos[2].toFixed(1)}</span>
+        <div className="pt-1">
+          <div className={label}>Rank {level}</div>
+          <div className="text-sm font-bold leading-tight">{rankName}</div>
+          <div className="mt-1.5 w-28 h-1 bg-white/10 rounded-full overflow-hidden">
+            <div className="h-full bg-amber-400 rounded-full transition-all duration-300" style={{ width: `${Math.min(100, (xp / xpToNextLevel) * 100)}%` }} />
+          </div>
         </div>
       </div>
 
-      {/* 3. Top-Right: Hardware / Engine Telemetry & KillFeed */}
-      <div className="absolute top-4 right-4 flex flex-col items-end gap-2">
-        {/* Hardware & WASM/WGSL Performance HUD */}
-        <div className="p-2.5 bg-black/75 backdrop-blur-md border border-cyan-500/30 rounded-lg text-[10px] text-zinc-300 space-y-1 shadow-2xl min-w-[210px]">
-          <div className="flex items-center justify-between pb-1 border-b border-zinc-700/60 font-bold text-cyan-400">
-            <span className="flex items-center gap-1">
-              <Cpu className="w-3 h-3 text-cyan-400" /> VANGUARD KERNEL
-            </span>
-            <span className="text-emerald-400">{preset.toUpperCase()}</span>
+      {/* ---------- Top-center: objective / score ---------- */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-4">
+        <div className="flex items-stretch rounded-lg overflow-hidden border border-white/10 bg-black/55 backdrop-blur-sm shadow-[0_8px_30px_rgba(0,0,0,0.45)]">
+          <div className="px-3 py-1.5 bg-cyan-500/20 text-center min-w-[64px]">
+            <div className={`text-xl font-black leading-none ${num}`}>{myKills}</div>
+            <div className="text-[9px] text-cyan-200/70 tracking-[0.2em] mt-0.5">YOU</div>
           </div>
-
-          <div className="flex justify-between">
-            <span className="text-zinc-400">PIPELINE:</span>
-            <span className={`font-semibold ${isWebGPU ? 'text-cyan-300' : 'text-amber-400'}`}>
-              {isWebGPU ? 'WebGPU Native (WGSL)' : 'WebGL2 (GLSL JIT)'}
-            </span>
-          </div>
-
-          <div className="flex justify-between">
-            <span className="text-zinc-400">RENDER FPS:</span>
-            <span className={`font-bold ${fps >= 60 ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {fps} FPS ({frameTimeMs.toFixed(1)} ms)
-            </span>
-          </div>
-
-          <div className="flex justify-between">
-            <span className="text-zinc-400">WASM RAYCAST LATENCY:</span>
-            <span className="text-cyan-300">{latencyMs.toFixed(3)} ms</span>
-          </div>
-
-          <div className="flex justify-between">
-            <span className="text-zinc-400">GPU PARTICLES:</span>
-            <span className="text-purple-400">{activeParticles.toLocaleString()}</span>
-          </div>
-
-          <div className="flex justify-between items-center">
-            <span className="text-zinc-400">BOT DIFFICULTY:</span>
-            <button
-              onClick={onToggleBotDifficulty}
-              title="Click to toggle bot difficulty"
-              className="pointer-events-auto px-1.5 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-emerald-500/50 text-[9px] font-bold text-emerald-300 transition"
-            >
-              {botDifficulty === 'easy' ? 'CASUAL (NERFED)' : botDifficulty.toUpperCase()}
-            </button>
-          </div>
-
-          <div className="flex justify-between">
-            <span className="text-zinc-400">P2P NETWORK PING:</span>
-            <span className="text-emerald-400">{allPlayers.length > 1 ? `${allPlayers[0]?.ping || 18} ms` : 'HOST LISTEN (0 ms)'}</span>
-          </div>
-
-          <div className="pt-1 flex gap-1 pointer-events-auto">
-            <button
-              onClick={onOpenSettings}
-              className="flex-1 py-1 px-1.5 bg-zinc-800 hover:bg-zinc-700 text-cyan-300 border border-zinc-700 rounded flex items-center justify-center gap-1 transition"
-            >
-              <Settings className="w-3 h-3" /> SETTINGS
-            </button>
-            <button
-              onClick={onOpenLobby}
-              className="flex-1 py-1 px-1.5 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded flex items-center justify-center gap-1 transition"
-            >
-              <Users className="w-3 h-3" /> ROOM LOBBY
-            </button>
-          </div>
-        </div>
-
-        {/* Animated Killfeed */}
-        <div className="flex flex-col gap-1 w-64 items-end mt-2">
-          {killFeed.map((kf) => (
-            <div
-              key={kf.id}
-              className="py-1 px-2.5 bg-black/70 backdrop-blur border-l-2 border-red-500 rounded text-[11px] flex items-center gap-2 animate-fade-in text-white shadow-lg"
-            >
-              <span className="font-semibold text-cyan-400">{kf.killer}</span>
-              <span className="text-[10px] text-zinc-400 px-1 py-0.5 bg-zinc-800 rounded">
-                [{WEAPON_DEFINITIONS[kf.weapon].name}]
-              </span>
-              {kf.isHeadshot && (
-                <span className="text-amber-400 text-[10px] font-bold">🎯 HEADSHOT</span>
-              )}
-              <span className="text-zinc-400">▶</span>
-              <span className="text-red-400 font-semibold">{kf.victim}</span>
+          <div className="px-3 py-1.5 text-center min-w-[88px] flex flex-col justify-center">
+            <div className={label}>First to {targetKills}</div>
+            <div className="mt-1 h-1 bg-white/10 rounded-full overflow-hidden">
+              <div className="h-full bg-amber-400 rounded-full transition-all" style={{ width: `${Math.min(100, (myKills / targetKills) * 100)}%` }} />
             </div>
-          ))}
+          </div>
+          <div className="px-3 py-1.5 bg-red-500/20 text-center min-w-[64px]">
+            <div className={`text-xl font-black leading-none ${num}`}>{topEnemy}</div>
+            <div className="text-[9px] text-red-200/70 tracking-[0.2em] mt-0.5">TOP OP</div>
+          </div>
         </div>
       </div>
 
-      {/* CS2 Speedometer & Counter-Strafe Indicator */}
-      <div className="absolute bottom-28 left-6 p-2 bg-black/65 backdrop-blur border border-zinc-800 rounded-lg text-[10px] text-zinc-300 min-w-[140px]">
-        <div className="flex justify-between text-zinc-400">
-          <span>VELOCITY:</span>
-          <span className={`font-bold font-mono ${currentSpeed <= 0.8 ? 'text-emerald-400' : 'text-amber-400'}`}>
-            {(currentSpeed * 40).toFixed(0)} u/s
-          </span>
-        </div>
-        <div className="flex justify-between text-zinc-400">
-          <span>ACCURACY:</span>
-          <span className={`font-bold ${currentSpeed <= 0.8 ? 'text-emerald-400' : 'text-red-400'}`}>
-            {currentSpeed <= 0.8 ? 'PINPOINT (STOPPED)' : 'INACCURATE (MOVING)'}
-          </span>
-        </div>
+      {/* XP toasts + rank up + streak */}
+      <div className="absolute top-[14%] left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 pointer-events-none">
+        {levelUpNotification && (
+          <div className="px-5 py-1.5 rounded-md bg-amber-400 text-black font-black text-sm tracking-wide shadow-[0_0_30px_rgba(245,158,11,0.6)]">RANK UP — {levelUpNotification}</div>
+        )}
+        {killStreak >= 2 && (
+          <div className="flex items-center gap-2 px-4 py-1 rounded-md bg-black/60 border border-amber-400/50 text-amber-300 font-black text-sm tracking-wide">
+            <Flame className="w-4 h-4" />
+            {killStreak === 2 ? 'DOUBLE KILL' : killStreak === 3 ? 'TRIPLE KILL' : killStreak === 4 ? 'QUAD KILL' : `${killStreak} KILL STREAK`}
+          </div>
+        )}
+        {xpGains.slice(-3).map(g => (
+          <div key={g.id} className="text-[12px] font-bold text-amber-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] animate-fade-in">
+            +{g.amount} XP <span className="text-white/60 font-medium">{g.reason}</span>
+          </div>
+        ))}
       </div>
 
-      {/* 4. Iconic CS2 Static/Dynamic Competitive Green Crosshair */}
+      {/* ---------- Top-right: kill feed + perf chip ---------- */}
+      <div className="absolute top-4 right-4 flex flex-col items-end gap-1.5 w-80">
+        <div className="flex items-center gap-2 text-[10px] text-white/55 tabular-nums">
+          <span className={fps >= 60 ? 'text-emerald-300/80' : 'text-amber-300/90'}>{fps} FPS</span>
+          <span className="text-white/25">·</span>
+          <span>{allPlayers.length > 1 ? `${allPlayers[0]?.ping || 18} ms` : 'HOST'}</span>
+          <span className="text-white/25">·</span>
+          <span className="uppercase">{preset}{presetAuto ? " · auto" : ""}</span>
+          {renderResLabel && <><span className="text-white/25">·</span><span>{renderResLabel}</span></>}
+          {!isWebGPU && <span className="text-amber-300/80">· WebGL</span>}
+        </div>
+        {killFeed.slice(-6).map((kf) => (
+          <div key={kf.id} className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-black/55 backdrop-blur-sm border border-white/10 text-[11px] animate-fade-in">
+            <span className={`font-bold ${kf.killer === 'COMMANDER' || kf.killer === 'YOU' ? 'text-cyan-300' : 'text-white'}`}>{kf.killer}</span>
+            <span className="px-1.5 py-0.5 rounded bg-white/10 text-white/70 text-[10px] font-medium">{shortNames[kf.weapon]}</span>
+            {kf.isHeadshot && <span className="text-amber-300 text-[10px] font-bold">HS</span>}
+            <span className="font-bold text-red-300">{kf.victim}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ---------- Center: crosshair / reticles ---------- */}
       {!isADS && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-          {/* Top Bar */}
-          <div
-            className="absolute w-[2px] bg-[#00ff66] shadow-[0_0_1px_#000000,0_0_2px_#000000]"
-            style={{
-              height: '7px',
-              top: `-${crosshairGap + 7}px`,
-              left: '-1px'
-            }}
-          />
-          {/* Bottom Bar */}
-          <div
-            className="absolute w-[2px] bg-[#00ff66] shadow-[0_0_1px_#000000,0_0_2px_#000000]"
-            style={{
-              height: '7px',
-              top: `${crosshairGap}px`,
-              left: '-1px'
-            }}
-          />
-          {/* Left Bar */}
-          <div
-            className="absolute h-[2px] bg-[#00ff66] shadow-[0_0_1px_#000000,0_0_2px_#000000]"
-            style={{
-              width: '7px',
-              left: `-${crosshairGap + 7}px`,
-              top: '-1px'
-            }}
-          />
-          {/* Right Bar */}
-          <div
-            className="absolute h-[2px] bg-[#00ff66] shadow-[0_0_1px_#000000,0_0_2px_#000000]"
-            style={{
-              width: '7px',
-              left: `${crosshairGap}px`,
-              top: '-1px'
-            }}
-          />
-
-          {/* Center Precision Dot */}
-          <div className="w-[2px] h-[2px] bg-[#00ff66] shadow-[0_0_1px_#000000] -translate-x-1/2 -translate-y-1/2" />
+        <div className="absolute top-1/2 left-1/2 pointer-events-none">
+          {[
+            { w: 2, h: 7, x: -1, y: -(crosshairGap + 7) },
+            { w: 2, h: 7, x: -1, y: crosshairGap },
+            { w: 7, h: 2, x: -(crosshairGap + 7), y: -1 },
+            { w: 7, h: 2, x: crosshairGap, y: -1 },
+          ].map((b, i) => (
+            <div key={i} className="absolute bg-[#36ff8a]" style={{ width: b.w, height: b.h, left: b.x, top: b.y, boxShadow: '0 0 0 1px rgba(0,0,0,0.75)' }} />
+          ))}
+          <div className="absolute w-[2px] h-[2px] -ml-px -mt-px bg-[#36ff8a]" style={{ boxShadow: '0 0 0 1px rgba(0,0,0,0.75)' }} />
+          {moving && <div className="absolute left-1/2 -translate-x-1/2 top-9 text-[9px] tracking-[0.25em] text-white/40">MOVING</div>}
         </div>
       )}
 
-      {/* CS2 AWP Full Sniper Optical Scope Overlay */}
       {isADS && weapon === 'railgun' && (
         <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-          {/* Heavy Black Scope Mask Border */}
-          <div className="absolute inset-0 bg-black/95" style={{
-            maskImage: 'radial-gradient(circle 38vh at center, transparent 98%, black 100%)',
-            WebkitMaskImage: 'radial-gradient(circle 38vh at center, transparent 98%, black 100%)'
-          }} />
-
-          {/* Optical Scope Ring */}
-          <div className="w-[76vh] h-[76vh] rounded-full border-2 border-zinc-700/80 shadow-[inset_0_0_80px_rgba(0,0,0,0.9)] relative flex items-center justify-center">
-            {/* Fine Reticle Lines */}
-            <div className="absolute w-full h-[1px] bg-black/80" />
-            <div className="absolute h-full w-[1px] bg-black/80" />
-            <div className="w-2 h-2 rounded-full border border-red-500/80" />
-            <div className="w-0.5 h-0.5 bg-red-500 rounded-full" />
+          <div className="absolute inset-0 bg-black" style={{
+            maskImage: 'radial-gradient(circle 40vh at center, transparent 98.5%, black 100%)',
+            WebkitMaskImage: 'radial-gradient(circle 40vh at center, transparent 98.5%, black 100%)' }} />
+          <div className="w-[80vh] h-[80vh] rounded-full relative flex items-center justify-center" style={{ boxShadow: 'inset 0 0 90px rgba(0,0,0,0.9), inset 0 0 6px rgba(0,0,0,1)' }}>
+            <div className="absolute w-full h-px bg-black/85" />
+            <div className="absolute h-full w-px bg-black/85" />
+            {[-120, -80, -40, 40, 80, 120].map(o => <div key={`h${o}`} className="absolute h-2 w-px bg-black/70" style={{ left: `calc(50% + ${o}px)` }} />)}
+            {[40, 80, 120].map(o => <div key={`v${o}`} className="absolute w-2 h-px bg-black/70" style={{ top: `calc(50% + ${o}px)` }} />)}
+            <div className="w-1 h-1 bg-red-500 rounded-full shadow-[0_0_4px_#ef4444]" />
           </div>
-
-          {/* Moving Scope Inaccuracy Warning */}
-          {currentSpeed > 0.8 && (
-            <div className="absolute top-[22%] text-red-500 font-bold text-xs tracking-wider animate-pulse">
-              [ SCOPE INACCURATE - COUNTER-STRAFE TO STOP ]
-            </div>
-          )}
+          {moving && <div className="absolute top-[18%] text-red-400 font-bold text-xs tracking-[0.3em] animate-pulse">UNSTABLE — STOP TO FIRE</div>}
         </div>
       )}
 
-      {/* ADS Holographic Reticle for Assault Rifles */}
       {isADS && weapon !== 'railgun' && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-          <div className="w-8 h-8 rounded-full border border-cyan-400/60 flex items-center justify-center">
-            <div className="w-1.5 h-1.5 bg-cyan-300 rounded-full shadow-[0_0_8px_#00e5ff]" />
+          <div className="w-7 h-7 rounded-full border border-cyan-300/50 flex items-center justify-center">
+            <div className="w-1.5 h-1.5 bg-cyan-300 rounded-full shadow-[0_0_8px_#22d3ee]" />
           </div>
         </div>
       )}
 
-      {/* Dynamic Hitmarker Tick Overlay */}
       {hitmarkerState && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none animate-ping">
-          <div className={`relative w-8 h-8 ${hitmarkerState === 'headshot' ? 'text-amber-400' : 'text-white'}`}>
-            <div className={`absolute top-0 left-0 w-3 h-[2px] rotate-45 ${hitmarkerState === 'headshot' ? 'bg-amber-400' : 'bg-red-400'}`} />
-            <div className={`absolute top-0 right-0 w-3 h-[2px] -rotate-45 ${hitmarkerState === 'headshot' ? 'bg-amber-400' : 'bg-red-400'}`} />
-            <div className={`absolute bottom-0 left-0 w-3 h-[2px] -rotate-45 ${hitmarkerState === 'headshot' ? 'bg-amber-400' : 'bg-red-400'}`} />
-            <div className={`absolute bottom-0 right-0 w-3 h-[2px] rotate-45 ${hitmarkerState === 'headshot' ? 'bg-amber-400' : 'bg-red-400'}`} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none hitmarker-pop">
+          <div className="relative w-7 h-7">
+            {[45, -45, -45, 45].map((r, i) => (
+              <div key={i} className={`absolute w-3 h-[2px] ${hitmarkerState === 'headshot' ? 'bg-amber-300' : hitmarkerState === 'shield_break' ? 'bg-cyan-300' : 'bg-white'}`}
+                style={{ transform: `rotate(${r}deg)`, left: i % 2 === 0 ? 0 : 'auto', right: i % 2 === 1 ? 0 : 'auto', top: i < 2 ? 0 : 'auto', bottom: i >= 2 ? 0 : 'auto', boxShadow: '0 0 0 1px rgba(0,0,0,0.6)' }} />
+            ))}
           </div>
         </div>
       )}
 
-      {/* Floating Combat Damage Numbers */}
       {floatingDamages.map((dmg) => (
-        <div
-          key={dmg.id}
-          className={`absolute font-black pointer-events-none transform -translate-x-1/2 -translate-y-1/2 transition-all ${
-            dmg.isHeadshot
-              ? 'text-amber-400 text-lg shadow-[0_0_12px_#f59e0b]'
-              : 'text-white text-sm'
-          }`}
-          style={{
-            left: `${dmg.x}px`,
-            top: `${dmg.y}px`,
-            opacity: dmg.opacity
-          }}
-        >
+        <div key={dmg.id} className={`absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 font-black tabular-nums ${dmg.isHeadshot ? 'text-amber-300 text-lg' : 'text-white text-sm'}`}
+          style={{ left: dmg.x, top: dmg.y, opacity: dmg.opacity, textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6)' }}>
           {dmg.damage}
-          {dmg.isHeadshot && ' CRIT!'}
         </div>
       ))}
 
-      {/* 5. Bottom-Left: Vital Health & Armor Indicators */}
-      <div className="absolute bottom-6 left-6 p-4 bg-black/75 backdrop-blur-md border border-cyan-500/30 rounded-xl shadow-2xl min-w-[260px]">
-        {/* Health bar */}
-        <div className="mb-3">
-          <div className="flex justify-between items-center mb-1">
-            <span className="flex items-center gap-1.5 text-red-400 font-bold tracking-wider">
-              <Heart className="w-4 h-4 fill-red-500/40 text-red-400" /> HP
-            </span>
-            <span className="text-lg font-black text-white">{Math.max(0, health)}</span>
-          </div>
-          <div className="w-full h-3 bg-zinc-900 rounded-full overflow-hidden border border-red-950 p-[1px]">
-            <div
-              className="h-full bg-gradient-to-r from-red-600 to-rose-400 transition-all duration-150 rounded-full shadow-[0_0_8px_#e11d48]"
-              style={{ width: `${Math.max(0, Math.min(100, health))}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Armor / Shield bar */}
-        <div>
-          <div className="flex justify-between items-center mb-1">
-            <span className="flex items-center gap-1.5 text-cyan-400 font-bold tracking-wider">
-              <Shield className="w-4 h-4 fill-cyan-500/40 text-cyan-400" /> NANO SHIELD
-            </span>
-            <span className="text-base font-bold text-cyan-300">{Math.max(0, armor)}</span>
-          </div>
-          <div className="w-full h-2 bg-zinc-900 rounded-full overflow-hidden border border-cyan-950 p-[1px]">
-            <div
-              className="h-full bg-gradient-to-r from-cyan-600 to-sky-400 transition-all duration-150 rounded-full shadow-[0_0_8px_#0284c7]"
-              style={{ width: `${Math.max(0, Math.min(100, (armor / 50) * 100))}%` }}
-            />
+      {/* ---------- Bottom-left: vitals ---------- */}
+      <div className={`absolute bottom-0 left-0 pl-6 pb-6 pr-24 pt-10 ${panelL}`}>
+        <div className="flex items-end gap-3">
+          <div className={`text-[56px] font-black leading-none ${num} ${health < 35 ? 'text-red-400' : 'text-white'}`} style={{ textShadow: '0 2px 10px rgba(0,0,0,0.6)' }}>{Math.max(0, Math.round(health))}</div>
+          <div className="pb-2 w-44">
+            <div className="flex justify-between items-baseline mb-1">
+              <span className={label}>Health</span>
+              {armor > 0 && <span className={`text-[11px] font-bold text-cyan-300 ${num}`}>⛨ {Math.max(0, Math.round(armor))}</span>}
+            </div>
+            <div className="h-2 bg-white/10 rounded-sm overflow-hidden">
+              <div className={`h-full transition-all duration-150 ${health < 35 ? 'bg-red-500' : 'bg-emerald-400'}`} style={{ width: `${hpPct}%` }} />
+            </div>
+            <div className="h-1 mt-1 bg-white/10 rounded-sm overflow-hidden">
+              <div className="h-full bg-cyan-400 transition-all duration-150" style={{ width: `${armorPct}%` }} />
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Killstreak Banner (Roblox Rivals Style) */}
-      {killStreak >= 2 && (
-        <div className="absolute top-[28%] left-1/2 -translate-x-1/2 pointer-events-none flex flex-col items-center animate-bounce z-40">
-          <div className="py-1 px-4 bg-gradient-to-r from-red-600 via-amber-500 to-yellow-400 text-black font-black text-sm rounded-full shadow-[0_0_20px_#f59e0b] flex items-center gap-2 border-2 border-white">
-            <Flame className="w-4 h-4 fill-black" />
-            <span>
-              {killStreak === 2 ? 'DOUBLE ELIMINATION (x2)!' :
-               killStreak === 3 ? 'TRIPLE KILL (x3)!' :
-               killStreak === 4 ? 'QUAD DOMINATION (x4)!' :
-               '🔥 UNSTOPPABLE SPREE (x' + killStreak + ')! 🔥'}
-            </span>
+      {/* ---------- Bottom-right: weapon ---------- */}
+      <div className={`absolute bottom-0 right-0 pr-6 pb-6 pl-24 pt-10 ${panelR} text-right`}>
+        <div className="flex items-end justify-end gap-4">
+          <div className="pb-2">
+            <div className="text-sm font-bold tracking-wide">{currentWeaponDef.name}</div>
+            <div className="text-[10px] text-white/45">{currentWeaponDef.category.split(' (')[0]}{activeSkinName !== 'Standard' ? ` · ${activeSkinName}` : ''}</div>
           </div>
-        </div>
-      )}
-
-      {/* 6. Bottom-Right: Tactical Weapon Display & Ammunition */}
-      <div className="absolute bottom-6 right-6 p-4 bg-black/80 backdrop-blur-md border border-cyan-500/40 rounded-xl shadow-2xl min-w-[320px]">
-        <div className="flex justify-between items-start mb-2 border-b border-zinc-800 pb-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-cyan-400/80 uppercase font-semibold">
-                {currentWeaponDef.category}
-              </span>
-              <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
-                {activeSkinName}
-              </span>
+          {currentWeaponDef.isMelee ? (
+            <div className="flex items-center gap-2 text-2xl font-black"><Sword className="w-6 h-6 text-cyan-300" /> READY</div>
+          ) : (
+            <div className="flex items-baseline gap-1.5">
+              <span className={`text-[56px] font-black leading-none ${num} ${lowAmmo ? 'text-red-400' : 'text-white'} ${ammo === 0 ? 'animate-pulse' : ''}`} style={{ textShadow: '0 2px 10px rgba(0,0,0,0.6)' }}>{ammo}</span>
+              <span className={`text-lg font-semibold text-white/45 ${num}`}>/ {reserveAmmo}</span>
             </div>
-            <div className="text-base font-black text-white tracking-wide flex items-center gap-2">
-              <span>{currentWeaponDef.name}</span>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* 9-Slot Hotkey Arsenal Bar (Clickable / Quick switch) */}
-        <div className="grid grid-cols-9 gap-1 mb-2 pointer-events-auto">
-          {(['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg', 'smg', 'revolver', 'crossbow'] as WeaponType[]).map((wId, idx) => {
-            const isCur = weapon === wId;
-            const shortNames: Record<WeaponType, string> = { rifle: 'AK', railgun: 'AWP', shotgun: 'SPAS', pistol: 'DEAGLE', melee: 'BLADE', rpg: 'RPG', smg: 'SMG', revolver: 'REV', crossbow: 'BOW' };
-            const shortName = shortNames[wId];
+        {/* reload / prompt line */}
+        <div className="h-5 mt-1 flex items-center justify-end">
+          {isReloading ? (
+            <div className="w-56 h-1 bg-white/10 rounded-sm overflow-hidden">
+              <div className="h-full bg-amber-400" style={{ width: `${reloadProgress * 100}%` }} />
+            </div>
+          ) : ammo === 0 && !currentWeaponDef.isMelee ? (
+            <span className="text-[11px] font-bold tracking-[0.2em] text-red-300 animate-pulse">PRESS R TO RELOAD</span>
+          ) : lowAmmo ? (
+            <span className="text-[10px] tracking-[0.2em] text-amber-300/90">LOW AMMO</span>
+          ) : null}
+        </div>
+
+        {/* weapon rail */}
+        <div className="flex justify-end gap-1 mt-2 pointer-events-auto">
+          {arsenal.map((w, idx) => {
+            const cur = weapon === w;
             return (
-              <button
-                key={wId}
-                onClick={() => onSelectWeaponSlot?.(wId)}
-                className={`py-1 px-1 rounded text-[9px] font-bold border transition text-center ${
-                  isCur 
-                    ? 'bg-amber-500 text-black border-amber-400 font-black shadow-[0_0_8px_#f59e0b]' 
-                    : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 border-zinc-800'
-                }`}
-              >
-                <div>[{idx + 1}]</div>
-                <div className="truncate">{shortName}</div>
+              <button key={w} onClick={() => onSelectWeaponSlot?.(w)} title={`${idx + 1} — ${WEAPON_DEFINITIONS[w].name}`}
+                className={`relative px-2 h-7 rounded-[4px] text-[10px] font-bold transition-all ${cur ? 'bg-white text-black' : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'}`}>
+                {shortNames[w]}
+                <span className={`absolute -top-1 -left-1 w-3.5 h-3.5 rounded-full text-[8px] leading-[14px] text-center ${cur ? 'bg-amber-400 text-black' : 'bg-black/70 text-white/50'}`}>{idx + 1}</span>
               </button>
             );
           })}
         </div>
-
-        {/* Ammo Counter */}
-        <div className="flex items-baseline justify-between mt-2 pt-1 border-t border-zinc-800/60">
-          <div className="flex items-baseline gap-1">
-            {currentWeaponDef.isMelee ? (
-              <span className="text-xl font-black text-cyan-300 flex items-center gap-1">
-                <Sword className="w-5 h-5 text-cyan-400" /> READY
-              </span>
-            ) : (
-              <>
-                <span className={`text-4xl font-black tracking-tight ${ammo <= (weapon === 'rpg' ? 0 : 4) ? 'text-red-500 animate-pulse' : 'text-cyan-300'}`}>
-                  {ammo}
-                </span>
-                <span className="text-zinc-500 text-lg font-semibold">/ {reserveAmmo}</span>
-              </>
-            )}
-          </div>
-
-          {/* Reload indicator */}
-          {isReloading && (
-            <div className="text-right">
-              <span className="text-amber-400 font-bold text-xs animate-pulse">RELOADING...</span>
-              <div className="w-24 h-1.5 bg-zinc-800 rounded-full mt-1 overflow-hidden">
-                <div 
-                  className="h-full bg-amber-400 transition-all"
-                  style={{ width: `${reloadProgress * 100}%` }}
-                />
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
-      {/* 7. Bottom-Center: Operational Match Chatbox */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-96 pointer-events-auto">
-        <div className="bg-black/60 backdrop-blur border border-zinc-800 rounded-lg p-2 max-h-36 overflow-y-auto mb-1">
-          {chatMessages.slice(-5).map((m, i) => (
-            <div key={i} className="text-[11px] mb-1">
-              <span className="font-bold text-cyan-400">{m.sender}: </span>
-              <span className="text-zinc-200">{m.text}</span>
-            </div>
-          ))}
-          <div ref={chatBottomRef} />
-        </div>
-
-        {chatOpen && (
-          <div className="flex gap-1 bg-black/90 p-1 border border-cyan-500/50 rounded-lg">
-            <input
-              type="text"
-              autoFocus
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Press Enter to send (e.g. /bot, /quality, /fps)..."
-              className="flex-1 bg-transparent border-none text-white text-xs px-2 py-1 outline-none font-mono"
-            />
-            <button
-              onClick={() => {
-                if (chatInput.trim()) {
-                  onSendChat(chatInput);
-                  setChatInput('');
-                  setChatOpen(false);
-                }
-              }}
-              className="px-2 py-0.5 bg-cyan-600 text-white rounded text-[10px] font-bold"
-            >
-              SEND
-            </button>
-          </div>
-        )}
+      {/* ---------- Bottom-center: contextual hint ---------- */}
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] tracking-[0.2em] text-white/30">
+        TAB SCOREBOARD · B ARMORY · F INSPECT · ESC MENU
       </div>
 
-      {/* 8. Global Match Leaderboard Overlay (Tab) */}
+      {/* ---------- Scoreboard (hold Tab) ---------- */}
       {showLeaderboard && (
-        <div className="absolute inset-0 bg-black/85 backdrop-blur-lg flex items-center justify-center pointer-events-auto z-50">
-          <div className="bg-zinc-950 border border-cyan-500/40 rounded-2xl p-6 w-[640px] shadow-2xl">
-            <div className="flex justify-between items-center pb-3 border-b border-zinc-800 mb-4">
-              <div className="flex items-center gap-2 text-cyan-400 font-bold text-base">
-                <Trophy className="w-5 h-5 text-amber-400" /> MATCH LEADERBOARD
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center pointer-events-auto z-50">
+          <div className="w-[720px] max-w-[94vw] rounded-xl border border-white/10 bg-[#0b0e14]/95 shadow-[0_30px_80px_rgba(0,0,0,0.7)] overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <Trophy className="w-5 h-5 text-amber-400" />
+                <div>
+                  <div className="text-base font-black tracking-wide">SCOREBOARD</div>
+                  <div className="text-[11px] text-white/45">First to {targetKills} · {isHost ? 'Hosting' : 'Peer'}{roomId ? ` · Room ${roomId}` : ''}</div>
+                </div>
               </div>
-              <span className="text-zinc-500 text-xs">Press [TAB] to close</span>
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="px-2 py-1 rounded bg-amber-400/15 text-amber-300 font-bold flex items-center gap-1"><Coins className="w-3.5 h-3.5" />{coins.toLocaleString()}</span>
+                <span className={`px-2 py-1 rounded font-bold flex items-center gap-1 ${antiCheatViolations > 0 ? 'bg-red-500/15 text-red-300' : 'bg-cyan-400/10 text-cyan-300'}`}><ShieldCheck className="w-3.5 h-3.5" />{antiCheatStatus}</span>
+              </div>
             </div>
-
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-zinc-800 text-zinc-400">
-                  <th className="pb-2">PLAYER</th>
-                  <th className="pb-2">TYPE</th>
-                  <th className="pb-2 text-right">KILLS</th>
-                  <th className="pb-2 text-right">DEATHS</th>
-                  <th className="pb-2 text-right">SCORE</th>
-                  <th className="pb-2 text-right">PING</th>
+                <tr className="text-white/40 border-b border-white/10">
+                  <th className="px-6 py-2 font-semibold tracking-wider">OPERATOR</th>
+                  <th className="py-2 font-semibold tracking-wider">TYPE</th>
+                  <th className="py-2 text-right font-semibold tracking-wider">K</th>
+                  <th className="py-2 text-right font-semibold tracking-wider">D</th>
+                  <th className="py-2 text-right font-semibold tracking-wider">K/D</th>
+                  <th className="px-6 py-2 text-right font-semibold tracking-wider">PING</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-900">
-                {allPlayers.map((p) => (
-                  <tr key={p.id} className="text-zinc-200">
-                    <td className="py-2.5 font-bold text-cyan-300">{p.name}</td>
-                    <td className="py-2.5 text-zinc-400">
-                      {p.isHost ? 'HOST' : (p.isBot ? 'TACTICAL BOT' : 'PEER')}
-                    </td>
-                    <td className="py-2.5 text-right font-semibold text-emerald-400">{p.kills}</td>
-                    <td className="py-2.5 text-right text-red-400">{p.deaths}</td>
-                    <td className="py-2.5 text-right font-black text-amber-300">{p.kills * 100}</td>
-                    <td className="py-2.5 text-right text-zinc-400">{p.ping} ms</td>
+              <tbody>
+                {[...allPlayers].sort((a, b) => b.kills - a.kills).map((p) => (
+                  <tr key={p.id} className={`border-b border-white/5 ${p.id === 'local' ? 'bg-cyan-400/10' : ''}`}>
+                    <td className="px-6 py-2.5 font-bold">{p.name}{p.id === 'local' && <span className="ml-2 text-[9px] text-cyan-300">YOU</span>}</td>
+                    <td className="py-2.5 text-white/50">{p.isHost ? 'Host' : p.isBot ? 'Bot' : 'Peer'}</td>
+                    <td className={`py-2.5 text-right font-bold ${num}`}>{p.kills}</td>
+                    <td className={`py-2.5 text-right text-white/60 ${num}`}>{p.deaths}</td>
+                    <td className={`py-2.5 text-right ${num}`}>{(p.kills / Math.max(1, p.deaths)).toFixed(2)}</td>
+                    <td className={`px-6 py-2.5 text-right text-white/50 ${num}`}>{p.ping} ms</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <div className="flex items-center justify-between px-6 py-3 bg-black/30 text-[11px]">
+              <div className="flex items-center gap-2">
+                <button onClick={onToggleBots} className={`px-2.5 py-1 rounded-md border flex items-center gap-1.5 font-semibold ${botsEnabled ? 'border-emerald-400/40 text-emerald-300 bg-emerald-400/10' : 'border-white/15 text-white/50'}`}>
+                  <Bot className="w-3.5 h-3.5" /> Bots {botsEnabled ? 'on' : 'off'}
+                </button>
+                <button onClick={onToggleBotDifficulty} className="px-2.5 py-1 rounded-md border border-white/15 text-white/70 hover:text-white font-semibold capitalize">
+                  {botDifficulty}
+                </button>
+                <span className="text-white/35 ml-2">{isWebGPU ? 'WebGPU' : 'WebGL'} · {latencyMs.toFixed(2)} ms raycast · {myKills}/{myDeaths} K/D</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={onOpenSettings} className="px-2.5 py-1 rounded-md border border-white/15 text-white/70 hover:text-white flex items-center gap-1.5"><Settings className="w-3.5 h-3.5" /> Settings</button>
+                <button onClick={onOpenLobby} className="px-2.5 py-1 rounded-md border border-white/15 text-white/70 hover:text-white flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Lobby</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
-      {/* 9. Player Elimination & Death Screen Overlay */}
+
+      {/* ---------- Death screen ---------- */}
       {isDead && (
-        <div className="absolute inset-0 bg-red-950/75 backdrop-blur-md flex flex-col items-center justify-center pointer-events-auto z-50 animate-fade-in">
-          <div className="text-red-500 text-4xl font-black tracking-widest animate-pulse mb-2 drop-shadow-[0_0_20px_#ef4444]">
-            YOU WERE ELIMINATED
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-auto z-50 animate-fade-in" style={{ background: 'radial-gradient(ellipse at center, rgba(60,0,8,0.55) 0%, rgba(0,0,0,0.85) 100%)' }}>
+          <div className="text-[11px] tracking-[0.5em] text-red-300/80 mb-2">ELIMINATED</div>
+          <div className="text-3xl font-black tracking-wide mb-1">by {killerName}</div>
+          <div className={`text-white/50 text-sm mb-8 ${num}`}>Redeploying in {respawnCountdown}s</div>
+          <div className="flex gap-3">
+            <button onClick={onRespawn} className="px-8 py-3 rounded-lg bg-white text-black font-black text-sm tracking-wide hover:bg-cyan-200 transition">
+              DEPLOY NOW <span className="text-black/50 font-semibold ml-1">SPACE</span>
+            </button>
+            {onChangeLoadout && (
+              <button onClick={onChangeLoadout} className="px-6 py-3 rounded-lg bg-white/10 border border-white/30 text-white font-black text-sm tracking-wide hover:bg-white/20 transition">
+                CHANGE LOADOUT <span className="text-white/50 font-semibold ml-1">L</span>
+              </button>
+            )}
           </div>
-          <div className="text-zinc-300 text-sm mb-4">
-            Eliminated by <span className="font-bold text-white text-base text-cyan-300">{killerName}</span>
-          </div>
-          <div className="text-amber-400 font-mono text-base font-bold mb-6">
-            RESPAWNING IN {respawnCountdown}s...
-          </div>
-          <button
-            onClick={onRespawn}
-            className="py-3 px-8 bg-red-600 hover:bg-red-500 text-white font-black text-sm rounded-xl shadow-[0_0_25px_#ef4444] transition cursor-pointer"
-          >
-            RESPAWN NOW [SPACE]
-          </button>
         </div>
       )}
     </div>

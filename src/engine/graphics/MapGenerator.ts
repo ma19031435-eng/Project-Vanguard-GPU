@@ -4,8 +4,13 @@
  */
 
 import * as THREE from 'three';
-import { BoundingBox3D } from '../wasm/WasmPhysicsCore.ts';
+import { BoundingBox3D, WasmPhysicsCore } from '../wasm/WasmPhysicsCore.ts';
+
+const WasmPhysicsCore_STEP = WasmPhysicsCore.STEP_HEIGHT;
 import { ProceduralTextureGenerator } from './MaterialsAndTextures.ts';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { EnvironmentDetailer } from './EnvironmentDetailer.ts';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export interface DestructibleObject {
   id: string;
@@ -110,14 +115,19 @@ export class MapGenerator {
    * Builds "Outpost Mirage" - Authentic Earth Military Compound
    * Bright sunny blue skies, concrete blast ramparts, sandbag posts, military shipping depot
    */
-  public buildArena(anisotropy: number = 8): { spawnPoints: [number, number, number][] } {
+  public buildArena(anisotropy: number = 8, opts: { props?: boolean } = {}): { spawnPoints: [number, number, number][] } {
     const groundTextures = ProceduralTextureGenerator.createMetalFloorTextures(anisotropy);
     const wallTextures = ProceduralTextureGenerator.createWallTextures(anisotropy);
 
     // 1. Earth Desert Military Outpost Ground (120x120m)
     const floorGeo = new THREE.PlaneGeometry(120, 120);
+    [groundTextures.map, groundTextures.normalMap, groundTextures.roughnessMap, groundTextures.metalnessMap, groundTextures.aoMap].forEach(t => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(14, 14);
+    });
     const floorMat = new THREE.MeshStandardMaterial({
       map: groundTextures.map,
+      normalScale: new THREE.Vector2(1.4, 1.4),
       normalMap: groundTextures.normalMap,
       roughnessMap: groundTextures.roughnessMap,
       metalnessMap: groundTextures.metalnessMap,
@@ -131,6 +141,10 @@ export class MapGenerator {
     this.scene.add(floorMesh);
 
     // 2. Concrete Blast Walls
+    [wallTextures.map, wallTextures.normalMap, wallTextures.roughnessMap, wallTextures.metalnessMap, wallTextures.aoMap].forEach(t => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(10, 1.2);
+    });
     const wallMat = new THREE.MeshStandardMaterial({
       map: wallTextures.map,
       normalMap: wallTextures.normalMap,
@@ -152,18 +166,22 @@ export class MapGenerator {
     ];
 
     wallConfigs.forEach(wc => {
-      const wallGeo = new THREE.PlaneGeometry(wc.w, wallHeight);
+      const thick = 2.0;
+      const wallGeo = new RoundedBoxGeometry(wc.w, wallHeight, thick, 3, 0.12);
       const wall = new THREE.Mesh(wallGeo, wallMat);
       wall.position.set(wc.x, wallHeight / 2, wc.z);
       wall.rotation.y = wc.rotY;
+      // Push the wall outward so its inner face sits on the arena boundary
+      wall.translateZ(-thick / 2);
+      wall.castShadow = true;
       wall.receiveShadow = true;
       this.scene.add(wall);
 
-      const thick = 2.0;
-      let minX = wc.x - (wc.rotY === 0 || wc.rotY === Math.PI ? wc.w / 2 : thick / 2);
-      let maxX = wc.x + (wc.rotY === 0 || wc.rotY === Math.PI ? wc.w / 2 : thick / 2);
-      let minZ = wc.z - (wc.rotY === 0 || wc.rotY === Math.PI ? thick / 2 : wc.w / 2);
-      let maxZ = wc.z + (wc.rotY === 0 || wc.rotY === Math.PI ? thick / 2 : wc.w / 2);
+      const horizontal = wc.rotY === 0 || wc.rotY === Math.PI;
+      const minX = wc.x - (horizontal ? wc.w / 2 : thick / 2);
+      const maxX = wc.x + (horizontal ? wc.w / 2 : thick / 2);
+      const minZ = wc.z - (horizontal ? thick / 2 : wc.w / 2);
+      const maxZ = wc.z + (horizontal ? thick / 2 : wc.w / 2);
 
       this.worldCollisionBoxes.push({
         minX, minY: 0, minZ,
@@ -176,7 +194,7 @@ export class MapGenerator {
     const steelMat = new THREE.MeshStandardMaterial({ color: 0x3d434a, roughness: 0.45, metalness: 0.75 });
 
     // Fortified concrete bunker base (10x10m, 4m high)
-    const bunkerGeo = new THREE.BoxGeometry(10, 4.0, 10);
+    const bunkerGeo = new RoundedBoxGeometry(10, 4.0, 10, 4, 0.15);
     const bunker = new THREE.Mesh(bunkerGeo, bunkerMat);
     bunker.position.set(0, 2.0, 0);
     bunker.castShadow = true;
@@ -184,7 +202,7 @@ export class MapGenerator {
     this.scene.add(bunker);
 
     // Watchtower Upper Cabin
-    const cabinGeo = new THREE.BoxGeometry(6, 3.0, 6);
+    const cabinGeo = new RoundedBoxGeometry(6, 3.0, 6, 3, 0.1);
     const cabin = new THREE.Mesh(cabinGeo, steelMat);
     cabin.position.set(0, 5.5, 0);
     cabin.castShadow = true;
@@ -209,8 +227,12 @@ export class MapGenerator {
     this.buildCatwalk(-22, 4.5, 0, 4.5, 38);
     this.buildCatwalk(22, 4.5, 0, 4.5, 38);
 
-    this.buildRamp(0, 2.25, -12, 4.5, 16, -Math.PI / 12);
-    this.buildRamp(0, 2.25, 12, 4.5, 16, Math.PI / 12);
+    // Walkable ramps from ground (bunker side) up to the N/S catwalks
+    this.buildStairRamp(0, -13.5, 13, 4.2, 4.5, 'z', -1);
+    this.buildStairRamp(0, 13.5, 13, 4.2, 4.5, 'z', 1);
+    // Side ramps up to the E/W catwalks
+    this.buildStairRamp(-13.5, 0, 13, 4.2, 4.5, 'x', -1);
+    this.buildStairRamp(13.5, 0, 13, 4.2, 4.5, 'x', 1);
 
     // 5. Authentic CS2 Shipping Containers (Red, Blue, Olive Green)
     const redContainerTex = ProceduralTextureGenerator.createContainerTexture('red');
@@ -228,13 +250,23 @@ export class MapGenerator {
       { x: 14, z: 8, sx: 3.4, sy: 2.5, sz: 3.4, mat: redMat },
       { x: -16, z: 14, sx: 4.4, sy: 2.5, sz: 2.5, mat: blueMat },
       { x: 16, z: -14, sx: 4.4, sy: 2.5, sz: 2.5, mat: redMat },
-      { x: 8, z: -18, sx: 3.4, sy: 2.5, sz: 3.4, mat: oliveMat },
-      { x: -8, z: 18, sx: 3.4, sy: 2.5, sz: 3.4, mat: blueMat }
+      { x: 8, z: -22, sx: 3.4, sy: 2.5, sz: 3.4, mat: oliveMat },
+      { x: -8, z: 22, sx: 3.4, sy: 2.5, sz: 3.4, mat: blueMat }
     ];
 
     containerLocations.forEach((loc, index) => {
       this.createDestructibleCrate(`container_${index}`, loc.x, loc.sy / 2, loc.z, loc.sx, loc.sy, loc.sz, loc.mat);
+      this.decorateContainer(loc.x, loc.sy / 2, loc.z, loc.sx, loc.sy, loc.sz);
     });
+
+    // 6. Movement Course: slide gates, flank platforms, approach ramps & tactical cover
+    this.buildMovementCourse();
+
+    // 7. High-detail environment layer (props, railings, terrain, decals, signage)
+    if (opts.props !== false) {
+      const detailer = new EnvironmentDetailer(this.scene, this.worldCollisionBoxes);
+      detailer.build();
+    }
 
     const spawnPoints: [number, number, number][] = [
       [0, 0, -38],
@@ -248,8 +280,252 @@ export class MapGenerator {
     return { spawnPoints };
   }
 
+  /**
+   * Momentum movement course layered onto the outpost:
+   * - Four slide gates: a low horizontal bar you can only pass under while sliding
+   * - Four elevated corner flank platforms with approach ramps
+   * - Eight waist-high cover blocks for peeking / slide-cancel duels
+   * - Emissive route strips and beacons that read the slide lanes at a glance
+   */
+  private buildMovementCourse(): void {
+    const supportMat = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.45, metalness: 0.8 });
+    const barMat = new THREE.MeshStandardMaterial({
+      color: 0x0e7490, emissive: 0x22d3ee, emissiveIntensity: 0.9, roughness: 0.3, metalness: 0.6
+    });
+    const platformMat = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.55, metalness: 0.6 });
+    const coverMat = new THREE.MeshStandardMaterial({ color: 0x6b6256, roughness: 0.85, metalness: 0.05 });
+    const stripMat = new THREE.MeshStandardMaterial({
+      color: 0x0891b2, emissive: 0x06b6d4, emissiveIntensity: 1.6, roughness: 0.4, metalness: 0.2
+    });
+    const beaconMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b, emissive: 0xfbbf24, emissiveIntensity: 2.2, roughness: 0.3, metalness: 0.4
+    });
+
+    // --- Slide gates on the four open center lanes (between bunker and catwalks) ---
+    // Gate clearance 1.0m: standing (1.62 eye) & crouching (1.15) are blocked, sliding (0.82) passes.
+    const gateClearance = 1.0;
+    const gates = [
+      { x: 9, z: -16, alongX: true },
+      { x: -9, z: 16, alongX: true },
+      { x: -16, z: 9, alongX: false },
+      { x: 16, z: -9, alongX: false }
+    ];
+
+    gates.forEach((g, i) => {
+      const span = 6.5;
+      const half = span / 2;
+      // Two support pillars
+      for (const side of [-1, 1]) {
+        const px = g.alongX ? g.x + side * half : g.x;
+        const pz = g.alongX ? g.z : g.z + side * half;
+        const pillar = new THREE.Mesh(new RoundedBoxGeometry(0.45, 2.6, 0.45, 2, 0.05), supportMat);
+        pillar.position.set(px, 1.3, pz);
+        pillar.castShadow = true;
+        pillar.receiveShadow = true;
+        this.scene.add(pillar);
+        this.worldCollisionBoxes.push({
+          minX: px - 0.225, minY: 0, minZ: pz - 0.225,
+          maxX: px + 0.225, maxY: 2.6, maxZ: pz + 0.225
+        });
+      }
+
+      // Horizontal slide bar — collidable from clearance height to top, passable underneath
+      const barGeo = g.alongX
+        ? new THREE.BoxGeometry(span, 0.3, 0.3)
+        : new THREE.BoxGeometry(0.3, 0.3, span);
+      const bar = new THREE.Mesh(barGeo, barMat);
+      bar.position.set(g.x, gateClearance + 0.15, g.z);
+      bar.castShadow = true;
+      this.scene.add(bar);
+      this.worldCollisionBoxes.push({
+        minX: g.alongX ? g.x - half : g.x - 0.15,
+        minY: gateClearance,
+        minZ: g.alongX ? g.z - 0.15 : g.z - half,
+        maxX: g.alongX ? g.x + half : g.x + 0.15,
+        maxY: gateClearance + 0.3,
+        maxZ: g.alongX ? g.z + 0.15 : g.z + half
+      });
+
+      // Overhead sign plate
+      const sign = new THREE.Mesh(
+        g.alongX ? new THREE.BoxGeometry(span, 0.5, 0.12) : new THREE.BoxGeometry(0.12, 0.5, span),
+        supportMat
+      );
+      sign.position.set(g.x, 2.35, g.z);
+      this.scene.add(sign);
+
+      // Glowing floor strip through the gate marking the slide lane
+      const strip = new THREE.Mesh(
+        g.alongX ? new THREE.BoxGeometry(0.5, 0.03, 10) : new THREE.BoxGeometry(10, 0.03, 0.5),
+        stripMat
+      );
+      strip.position.set(g.x, 0.015, g.z);
+      strip.receiveShadow = true;
+      this.scene.add(strip);
+
+      // Gate beacon light
+      const light = new THREE.PointLight(0x22d3ee, 2.4, 14, 2);
+      light.position.set(g.x, 2.1, g.z);
+      this.scene.add(light);
+      this.dynamicLights.push(light);
+      void i;
+    });
+
+    // --- Elevated corner flank platforms + approach ramps ---
+    const corners = [
+      { x: -30, z: -30 },
+      { x: 30, z: -30 },
+      { x: -30, z: 30 },
+      { x: 30, z: 30 }
+    ];
+    corners.forEach(c => {
+      const w = 9, d = 9, h = 3.2;
+      const plat = new THREE.Mesh(new RoundedBoxGeometry(w, 0.5, d, 2, 0.06), platformMat);
+      plat.position.set(c.x, h, c.z);
+      plat.castShadow = true;
+      plat.receiveShadow = true;
+      this.scene.add(plat);
+      this.worldCollisionBoxes.push({
+        minX: c.x - w / 2, minY: h - 0.25, minZ: c.z - d / 2,
+        maxX: c.x + w / 2, maxY: h + 0.25, maxZ: c.z + d / 2
+      });
+
+      // Four support legs
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.4, h, 0.4), supportMat);
+        leg.position.set(c.x + sx * (w / 2 - 0.4), h / 2, c.z + sz * (d / 2 - 0.4));
+        leg.castShadow = true;
+        this.scene.add(leg);
+        this.worldCollisionBoxes.push({
+          minX: leg.position.x - 0.2, minY: 0, minZ: leg.position.z - 0.2,
+          maxX: leg.position.x + 0.2, maxY: h - 0.25, maxZ: leg.position.z + 0.2
+        });
+      }
+
+      // Approach ramp pointing toward arena center (walkable staircase collision)
+      const dirX = (-Math.sign(c.x)) as 1 | -1;
+      const rampLen = 10;
+      const rampW = 3.2;
+      const rx = c.x + dirX * (w / 2 + rampLen / 2);
+      this.buildStairRamp(rx, c.z, rampLen, rampW, h, 'x', (-dirX) as 1 | -1);
+
+      // Corner beacon
+      const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.6, 12), beaconMat);
+      beacon.position.set(c.x, h + 1.05, c.z);
+      this.scene.add(beacon);
+      const bl = new THREE.PointLight(0xfbbf24, 1.8, 16, 2);
+      bl.position.set(c.x, h + 2, c.z);
+      this.scene.add(bl);
+      this.dynamicLights.push(bl);
+    });
+
+    // --- Waist-high tactical cover (symmetrical) ---
+    const covers = [
+      { x: -8, z: -26 }, { x: 8, z: -26 }, { x: -8, z: 26 }, { x: 8, z: 26 },
+      { x: -26, z: -8 }, { x: -26, z: 8 }, { x: 26, z: -8 }, { x: 26, z: 8 }
+    ];
+    covers.forEach(cv => {
+      const w = 2.6, h = 1.1, d = 0.9;
+      const alongX = Math.abs(cv.z) > Math.abs(cv.x);
+      const geo = alongX ? new THREE.BoxGeometry(w, h, d) : new THREE.BoxGeometry(d, h, w);
+      const m = new THREE.Mesh(geo, coverMat);
+      m.position.set(cv.x, h / 2, cv.z);
+      // Bevelled cap on top of each cover block
+      const cap = new THREE.Mesh(new RoundedBoxGeometry(alongX ? w + 0.1 : d + 0.1, 0.12, alongX ? d + 0.1 : w + 0.1, 2, 0.04), coverMat);
+      cap.position.set(cv.x, h + 0.06, cv.z);
+      cap.castShadow = true;
+      this.scene.add(cap);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      this.scene.add(m);
+      this.worldCollisionBoxes.push({
+        minX: cv.x - (alongX ? w : d) / 2, minY: 0, minZ: cv.z - (alongX ? d : w) / 2,
+        maxX: cv.x + (alongX ? w : d) / 2, maxY: h, maxZ: cv.z + (alongX ? d : w) / 2
+      });
+    });
+
+    // --- Perimeter route guidance strips (ring road under the catwalks) ---
+    const ringR = 32;
+    for (const [sx, sz, horiz] of [[0, -1, true], [0, 1, true], [-1, 0, false], [1, 0, false]] as const) {
+      const strip = new THREE.Mesh(
+        horiz ? new THREE.BoxGeometry(44, 0.03, 0.3) : new THREE.BoxGeometry(0.3, 0.03, 44),
+        stripMat
+      );
+      strip.position.set(sx * ringR, 0.015, sz * ringR);
+      this.scene.add(strip);
+    }
+  }
+
+  /** Corrugation ribs, corner castings, locking bars and a door seam for shipping containers. */
+  private decorateContainer(x: number, y: number, z: number, w: number, h: number, d: number): void {
+    const g = new THREE.Group();
+    const ribMat = new THREE.MeshStandardMaterial({ color: 0x1f2226, roughness: 0.6, metalness: 0.7 });
+    const castMat = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.5, metalness: 0.85 });
+    // Vertical corrugation ribs on long faces
+    const longAlongX = w >= d;
+    const faceLen = longAlongX ? w : d;
+    const ribCount = Math.floor(faceLen / 0.3);
+    for (let i = 0; i <= ribCount; i++) {
+      const t = -faceLen / 2 + (i / ribCount) * faceLen;
+      for (const side of [-1, 1]) {
+        const rib = new THREE.Mesh(new THREE.BoxGeometry(longAlongX ? 0.06 : 0.04, h - 0.2, longAlongX ? 0.04 : 0.06), ribMat);
+        rib.position.set(longAlongX ? t : side * (w / 2 + 0.02), 0, longAlongX ? side * (d / 2 + 0.02) : t);
+        g.add(rib);
+      }
+    }
+    // Corner castings
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+      const c = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.22), castMat);
+      c.position.set(sx * (w / 2 - 0.1), sy * (h / 2 - 0.1), sz * (d / 2 - 0.1));
+      g.add(c);
+    }
+    // Door end: locking bars + handles
+    const doorAlongX = !longAlongX;
+    for (let i = -1; i <= 1; i += 2) for (let k = 0; k < 2; k++) {
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, h - 0.3, 8), castMat);
+      const off = i * (0.35 + k * 0.5);
+      bar.position.set(doorAlongX ? off : w / 2 + 0.05, 0, doorAlongX ? d / 2 + 0.05 : off);
+      g.add(bar);
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(doorAlongX ? 0.25 : 0.06, 0.05, doorAlongX ? 0.06 : 0.25), castMat);
+      handle.position.set(doorAlongX ? off + 0.12 : w / 2 + 0.08, -0.2, doorAlongX ? d / 2 + 0.08 : off + 0.12);
+      g.add(handle);
+    }
+    // Roof vents
+    for (const sx of [-0.3, 0.3]) {
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.08, 0.4), castMat);
+      vent.position.set(sx * w, h / 2 + 0.04, 0);
+      g.add(vent);
+    }
+    // Batch the ~70 detail pieces into two draw calls (one per material)
+    const batched = new THREE.Group();
+    for (const mat of [ribMat, castMat]) {
+      const geos: THREE.BufferGeometry[] = [];
+      g.children.forEach(c => {
+        const m = c as THREE.Mesh;
+        if (m.material !== mat) return;
+        m.updateMatrix();
+        const gg = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+        gg.applyMatrix4(m.matrix);
+        geos.push(gg);
+      });
+      if (!geos.length) continue;
+      const merged = BufferGeometryUtils.mergeGeometries(geos, false);
+      geos.forEach(gg => gg.dispose());
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      batched.add(mesh);
+    }
+    batched.position.set(x, y, z);
+    this.scene.add(batched);
+    // Keep decoration tied to the crate so it disappears when destroyed
+    const crate = Array.from(this.destructibles.values()).pop();
+    if (crate) crate.mesh.userData.decor = batched;
+  }
+
   private buildCatwalk(x: number, y: number, z: number, w: number, d: number): void {
-    const geo = new THREE.BoxGeometry(w, 0.45, d);
+    const geo = new RoundedBoxGeometry(w, 0.45, d, 2, 0.05);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x3d434a,
       roughness: 0.5,
@@ -267,20 +543,49 @@ export class MapGenerator {
     });
   }
 
-  private buildRamp(x: number, y: number, z: number, w: number, d: number, rotX: number): void {
-    const geo = new THREE.BoxGeometry(w, 0.35, d);
+  /**
+   * Walkable ramp: a single tilted slab for visuals plus a staircase of
+   * collision boxes (each below STEP_HEIGHT) so the physics step-up can climb it.
+   * `axis` is the direction of travel, `dir` the sign toward the HIGH end.
+   */
+  public buildStairRamp(cx: number, cz: number, length: number, width: number, height: number, axis: 'x' | 'z', dir: 1 | -1): void {
     const mat = new THREE.MeshStandardMaterial({ color: 0x474e57, roughness: 0.5, metalness: 0.55 });
+    const slabLen = Math.hypot(length, height);
+    const geo = axis === 'x'
+      ? new RoundedBoxGeometry(slabLen, 0.3, width, 2, 0.04)
+      : new RoundedBoxGeometry(width, 0.3, slabLen, 2, 0.04);
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y, z);
-    mesh.rotation.x = rotX;
+    mesh.position.set(cx, height / 2 - 0.05, cz);
+    const angle = Math.atan2(height, length);
+    if (axis === 'x') mesh.rotation.z = dir * angle; else mesh.rotation.x = -dir * angle;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
 
-    this.worldCollisionBoxes.push({
-      minX: x - w / 2, minY: 0, minZ: z - d / 2,
-      maxX: x + w / 2, maxY: y * 2, maxZ: z + d / 2
-    });
+    // Anti-slip strips
+    const stripMat = new THREE.MeshStandardMaterial({ color: 0xd9b43a, roughness: 0.8 });
+    for (let i = 1; i < 6; i++) {
+      const t = i / 6;
+      const strip = new THREE.Mesh(axis === 'x' ? new THREE.BoxGeometry(0.12, 0.02, width - 0.3) : new THREE.BoxGeometry(width - 0.3, 0.02, 0.12), stripMat);
+      const along = -length / 2 + t * length;
+      const y = (t) * height + 0.12;
+      strip.position.set(axis === 'x' ? cx + dir * along : cx, y, axis === 'z' ? cz + dir * along : cz);
+      if (axis === 'x') strip.rotation.z = dir * angle; else strip.rotation.x = -dir * angle;
+      this.scene.add(strip);
+    }
+
+    const stepH = WasmPhysicsCore_STEP - 0.1;
+    const steps = Math.ceil(height / stepH);
+    for (let i = 0; i < steps; i++) {
+      const t0 = i / steps, t1 = (i + 1) / steps;
+      const a0 = -length / 2 + t0 * length;
+      const a1 = -length / 2 + t1 * length;
+      const lo = cx * 0 + Math.min(dir * a0, dir * a1);
+      const hi = Math.max(dir * a0, dir * a1);
+      this.worldCollisionBoxes.push(axis === 'x'
+        ? { minX: cx + lo, minY: 0, minZ: cz - width / 2, maxX: cx + hi, maxY: height * t1, maxZ: cz + width / 2 }
+        : { minX: cx - width / 2, minY: 0, minZ: cz + lo, maxX: cx + width / 2, maxY: height * t1, maxZ: cz + hi });
+    }
   }
 
   public createDestructibleCrate(
@@ -376,6 +681,7 @@ export class MapGenerator {
   private shatterObject(item: DestructibleObject, impactPoint?: THREE.Vector3): void {
     item.isDestroyed = true;
     this.scene.remove(item.mesh);
+    if (item.mesh.userData.decor) this.scene.remove(item.mesh.userData.decor as THREE.Object3D);
 
     const idx = this.worldCollisionBoxes.indexOf(item.box);
     if (idx !== -1) {
