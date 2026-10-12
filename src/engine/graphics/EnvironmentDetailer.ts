@@ -530,7 +530,7 @@ export class EnvironmentDetailer {
   private buildJerseyBarriers(): void {
     const geo = this.jerseyGeo();
     const placements: { x: number; z: number; rot: number }[] = [
-      { x: -20, z: -30, rot: 0 }, { x: -17, z: -30, rot: 0 }, { x: 20, z: 30, rot: 0 }, { x: 17, z: 30, rot: 0 },
+      { x: -20, z: -37, rot: 0 }, { x: -17, z: -37, rot: 0 }, { x: 20, z: 37, rot: 0 }, { x: 17, z: 37, rot: 0 },
       { x: -30, z: 20, rot: Math.PI / 2 }, { x: -30, z: 17, rot: Math.PI / 2 }, { x: 30, z: -20, rot: Math.PI / 2 }, { x: 30, z: -17, rot: Math.PI / 2 },
       { x: -40, z: -6, rot: Math.PI / 2 + 0.3 }, { x: 40, z: 6, rot: Math.PI / 2 - 0.3 }
     ];
@@ -879,9 +879,9 @@ export class EnvironmentDetailer {
     put(danger, -49.3, 3.6, 0, Math.PI / 2, 2.2);
     put(sector, 49.3, 3.6, 0, -Math.PI / 2, 2.2);
     // Slide gate signs
-    put(slide, 0, 2.35, -15.9, 0, 0.9);
-    put(slide, 0, 2.35, 16.1, Math.PI, 0.9);
-    put(slide, -15.9, 2.35, 0, Math.PI / 2, 0.9);
-    put(slide, 16.1, 2.35, 0, -Math.PI / 2, 0.9);
+    put(slide, 9, 2.35, -15.9, 0, 0.9);
+    put(slide, -9, 2.35, 16.1, Math.PI, 0.9);
+    put(slide, -15.9, 2.35, 9, Math.PI / 2, 0.9);
+    put(slide, 16.1, 2.35, -9, -Math.PI / 2, 0.9);
   }
 }

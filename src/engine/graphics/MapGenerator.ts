@@ -4,7 +4,9 @@
  */
 
 import * as THREE from 'three';
-import { BoundingBox3D } from '../wasm/WasmPhysicsCore.ts';
+import { BoundingBox3D, WasmPhysicsCore } from '../wasm/WasmPhysicsCore.ts';
+
+const WasmPhysicsCore_STEP = WasmPhysicsCore.STEP_HEIGHT;
 import { ProceduralTextureGenerator } from './MaterialsAndTextures.ts';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { EnvironmentDetailer } from './EnvironmentDetailer.ts';
@@ -225,8 +227,12 @@ export class MapGenerator {
     this.buildCatwalk(-22, 4.5, 0, 4.5, 38);
     this.buildCatwalk(22, 4.5, 0, 4.5, 38);
 
-    this.buildRamp(0, 2.25, -12, 4.5, 16, -Math.PI / 12);
-    this.buildRamp(0, 2.25, 12, 4.5, 16, Math.PI / 12);
+    // Walkable ramps from ground (bunker side) up to the N/S catwalks
+    this.buildStairRamp(0, -13.5, 13, 4.2, 4.5, 'z', -1);
+    this.buildStairRamp(0, 13.5, 13, 4.2, 4.5, 'z', 1);
+    // Side ramps up to the E/W catwalks
+    this.buildStairRamp(-13.5, 0, 13, 4.2, 4.5, 'x', -1);
+    this.buildStairRamp(13.5, 0, 13, 4.2, 4.5, 'x', 1);
 
     // 5. Authentic CS2 Shipping Containers (Red, Blue, Olive Green)
     const redContainerTex = ProceduralTextureGenerator.createContainerTexture('red');
@@ -244,8 +250,8 @@ export class MapGenerator {
       { x: 14, z: 8, sx: 3.4, sy: 2.5, sz: 3.4, mat: redMat },
       { x: -16, z: 14, sx: 4.4, sy: 2.5, sz: 2.5, mat: blueMat },
       { x: 16, z: -14, sx: 4.4, sy: 2.5, sz: 2.5, mat: redMat },
-      { x: 8, z: -18, sx: 3.4, sy: 2.5, sz: 3.4, mat: oliveMat },
-      { x: -8, z: 18, sx: 3.4, sy: 2.5, sz: 3.4, mat: blueMat }
+      { x: 8, z: -22, sx: 3.4, sy: 2.5, sz: 3.4, mat: oliveMat },
+      { x: -8, z: 22, sx: 3.4, sy: 2.5, sz: 3.4, mat: blueMat }
     ];
 
     containerLocations.forEach((loc, index) => {
@@ -297,10 +303,10 @@ export class MapGenerator {
     // Gate clearance 1.0m: standing (1.62 eye) & crouching (1.15) are blocked, sliding (0.82) passes.
     const gateClearance = 1.0;
     const gates = [
-      { x: 0, z: -16, alongX: true },
-      { x: 0, z: 16, alongX: true },
-      { x: -16, z: 0, alongX: false },
-      { x: 16, z: 0, alongX: false }
+      { x: 9, z: -16, alongX: true },
+      { x: -9, z: 16, alongX: true },
+      { x: -16, z: 9, alongX: false },
+      { x: 16, z: -9, alongX: false }
     ];
 
     gates.forEach((g, i) => {
@@ -390,30 +396,12 @@ export class MapGenerator {
         this.scene.add(leg);
       }
 
-      // Approach ramp pointing toward arena center (stepped collision so players can walk up)
-      const dirX = -Math.sign(c.x);
-      const dirZ = -Math.sign(c.z);
+      // Approach ramp pointing toward arena center (walkable staircase collision)
+      const dirX = (-Math.sign(c.x)) as 1 | -1;
       const rampLen = 10;
       const rampW = 3.2;
       const rx = c.x + dirX * (w / 2 + rampLen / 2);
-      const rz = c.z;
-      const ramp = new THREE.Mesh(new THREE.BoxGeometry(rampLen, 0.3, rampW), platformMat);
-      ramp.position.set(rx, h / 2, rz);
-      ramp.rotation.z = dirX * Math.atan2(h, rampLen);
-      ramp.castShadow = true;
-      ramp.receiveShadow = true;
-      this.scene.add(ramp);
-      const steps = 8;
-      for (let i = 0; i < steps; i++) {
-        const t0 = i / steps, t1 = (i + 1) / steps;
-        const segX0 = rx + dirX * (rampLen / 2) - dirX * t0 * rampLen;
-        const segX1 = rx + dirX * (rampLen / 2) - dirX * t1 * rampLen;
-        this.worldCollisionBoxes.push({
-          minX: Math.min(segX0, segX1), minY: 0, minZ: rz - rampW / 2,
-          maxX: Math.max(segX0, segX1), maxY: h * t1, maxZ: rz + rampW / 2
-        });
-      }
-      void dirZ;
+      this.buildStairRamp(rx, c.z, rampLen, rampW, h, 'x', (-dirX) as 1 | -1);
 
       // Corner beacon
       const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.6, 12), beaconMat);
@@ -549,20 +537,49 @@ export class MapGenerator {
     });
   }
 
-  private buildRamp(x: number, y: number, z: number, w: number, d: number, rotX: number): void {
-    const geo = new RoundedBoxGeometry(w, 0.35, d, 2, 0.05);
+  /**
+   * Walkable ramp: a single tilted slab for visuals plus a staircase of
+   * collision boxes (each below STEP_HEIGHT) so the physics step-up can climb it.
+   * `axis` is the direction of travel, `dir` the sign toward the HIGH end.
+   */
+  public buildStairRamp(cx: number, cz: number, length: number, width: number, height: number, axis: 'x' | 'z', dir: 1 | -1): void {
     const mat = new THREE.MeshStandardMaterial({ color: 0x474e57, roughness: 0.5, metalness: 0.55 });
+    const slabLen = Math.hypot(length, height);
+    const geo = axis === 'x'
+      ? new RoundedBoxGeometry(slabLen, 0.3, width, 2, 0.04)
+      : new RoundedBoxGeometry(width, 0.3, slabLen, 2, 0.04);
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y, z);
-    mesh.rotation.x = rotX;
+    mesh.position.set(cx, height / 2 - 0.05, cz);
+    const angle = Math.atan2(height, length);
+    if (axis === 'x') mesh.rotation.z = dir * angle; else mesh.rotation.x = -dir * angle;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
 
-    this.worldCollisionBoxes.push({
-      minX: x - w / 2, minY: 0, minZ: z - d / 2,
-      maxX: x + w / 2, maxY: y * 2, maxZ: z + d / 2
-    });
+    // Anti-slip strips
+    const stripMat = new THREE.MeshStandardMaterial({ color: 0xd9b43a, roughness: 0.8 });
+    for (let i = 1; i < 6; i++) {
+      const t = i / 6;
+      const strip = new THREE.Mesh(axis === 'x' ? new THREE.BoxGeometry(0.12, 0.02, width - 0.3) : new THREE.BoxGeometry(width - 0.3, 0.02, 0.12), stripMat);
+      const along = -length / 2 + t * length;
+      const y = (t) * height + 0.12;
+      strip.position.set(axis === 'x' ? cx + dir * along : cx, y, axis === 'z' ? cz + dir * along : cz);
+      if (axis === 'x') strip.rotation.z = dir * angle; else strip.rotation.x = -dir * angle;
+      this.scene.add(strip);
+    }
+
+    const stepH = WasmPhysicsCore_STEP - 0.1;
+    const steps = Math.ceil(height / stepH);
+    for (let i = 0; i < steps; i++) {
+      const t0 = i / steps, t1 = (i + 1) / steps;
+      const a0 = -length / 2 + t0 * length;
+      const a1 = -length / 2 + t1 * length;
+      const lo = cx * 0 + Math.min(dir * a0, dir * a1);
+      const hi = Math.max(dir * a0, dir * a1);
+      this.worldCollisionBoxes.push(axis === 'x'
+        ? { minX: cx + lo, minY: 0, minZ: cz - width / 2, maxX: cx + hi, maxY: height * t1, maxZ: cz + width / 2 }
+        : { minX: cx - width / 2, minY: 0, minZ: cz + lo, maxX: cx + width / 2, maxY: height * t1, maxZ: cz + hi });
+    }
   }
 
   public createDestructibleCrate(
