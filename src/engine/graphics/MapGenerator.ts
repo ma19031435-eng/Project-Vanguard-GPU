@@ -115,7 +115,7 @@ export class MapGenerator {
    * Builds "Outpost Mirage" - Authentic Earth Military Compound
    * Bright sunny blue skies, concrete blast ramparts, sandbag posts, military shipping depot
    */
-  public buildArena(anisotropy: number = 8): { spawnPoints: [number, number, number][] } {
+  public buildArena(anisotropy: number = 8, opts: { props?: boolean } = {}): { spawnPoints: [number, number, number][] } {
     const groundTextures = ProceduralTextureGenerator.createMetalFloorTextures(anisotropy);
     const wallTextures = ProceduralTextureGenerator.createWallTextures(anisotropy);
 
@@ -263,8 +263,10 @@ export class MapGenerator {
     this.buildMovementCourse();
 
     // 7. High-detail environment layer (props, railings, terrain, decals, signage)
-    const detailer = new EnvironmentDetailer(this.scene, this.worldCollisionBoxes);
-    detailer.build();
+    if (opts.props !== false) {
+      const detailer = new EnvironmentDetailer(this.scene, this.worldCollisionBoxes);
+      detailer.build();
+    }
 
     const spawnPoints: [number, number, number][] = [
       [0, 0, -38],

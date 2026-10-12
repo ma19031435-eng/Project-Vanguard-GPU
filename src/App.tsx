@@ -25,6 +25,11 @@ import { Trophy } from 'lucide-react';
 
 const ARENA_PLAYLIST_COUNT = 6;
 
+// Render debug switches (URL query): ?post=0 ?sky=0 ?env=0 ?props=0 ?exposure=0.6
+const DEBUG = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+const dbgOn = (k: string) => DEBUG.get(k) !== '0';
+if (DEBUG.toString()) console.info('[Vanguard debug]', Object.fromEntries(DEBUG.entries()));
+
 const MILITARY_RANKS = [
   'RECRUIT',
   'PRIVATE FIRST CLASS',
@@ -450,6 +455,10 @@ export default function App() {
 
     // Cinematic post stack + physical sky + PMREM environment reflections
     const pipeline = new CinematicPipeline(renderer, scene, camera, sunLight);
+    if (!dbgOn('sky')) { pipeline.sky.visible = false; scene.background = new THREE.Color(0x6f8fb0); }
+    if (!dbgOn('env')) { scene.environment = null; }
+    if (DEBUG.get('exposure')) renderer.toneMappingExposure = Number(DEBUG.get('exposure')) || 0.95;
+    const usePost = dbgOn('post');
 
     // 5. WASM Physics Engine
     const wasmCore = new WasmPhysicsCore();
@@ -459,7 +468,7 @@ export default function App() {
 
     // 7. Real Earth Military Compound Map
     const mapGen = new MapGenerator(scene);
-    const { spawnPoints } = mapGen.buildArena(qualityManager.getConfig().anisotropy);
+    const { spawnPoints } = mapGen.buildArena(qualityManager.getConfig().anisotropy, { props: dbgOn('props') });
 
     // 8. Procedural Weapon System
     const weaponSystem = new WeaponSystem(camera);
@@ -925,7 +934,8 @@ export default function App() {
       }
 
       (particleMat.uniforms.uTime as any).value = tSec;
-      engine.pipeline.render(dt, time);
+      if (usePost) engine.pipeline.render(dt, time);
+      else renderer.render(scene, camera);
 
       setPlayerPos([camera.position.x, camera.position.y, camera.position.z]);
       setPlayerYaw(engine.yaw);
