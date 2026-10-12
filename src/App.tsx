@@ -379,7 +379,7 @@ export default function App() {
             }
           });
         } catch (err) {
-          console.error('Firebase Auth profile load failed:', err);
+          console.warn('Firebase Auth profile load:', err);
           setAuthResolved(true);
         }
       } else {

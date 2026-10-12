@@ -76,7 +76,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose();
       }, 1000);
     } catch (err: any) {
-      console.error('Google auth error:', err);
+      const isCancelled =
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request' ||
+        err?.message?.includes('popup-closed-by-user') ||
+        err?.message?.includes('cancelled-popup-request');
+
+      if (isCancelled) {
+        // User closed the popup window voluntarily; reset state cleanly
+        setError(null);
+        return;
+      }
+
       const isDomainError =
         err?.code === 'auth/unauthorized-domain' ||
         err?.message?.includes('unauthorized-domain') ||
@@ -85,9 +96,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (isDomainError) {
         setDomainNotice(window.location.hostname || 'ominx-vanguard-fps.ai.studio');
         setError('Domain Authorization Required: Google login on this URL requires adding the domain to Firebase or using the Auth Bridge below.');
-      } else if (err?.code === 'auth/popup-closed-by-user') {
-        setError('Google sign-in window was closed.');
       } else {
+        console.warn('Google auth notice:', err?.message || err);
         setError(err?.message || 'Failed to authenticate via Google. Please try again.');
       }
     } finally {
@@ -105,7 +115,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onAuthSuccess(profile);
       setTimeout(() => onClose(), 1000);
     } catch (err: any) {
-      console.error('Auth bridge error:', err);
+      const isCancelled =
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request' ||
+        err?.message?.includes('popup-closed-by-user');
+
+      if (isCancelled) {
+        setError(null);
+        return;
+      }
+      console.warn('Auth bridge notice:', err?.message || err);
       setError(err?.message || 'Auth Bridge failed. Please ensure popups are allowed in browser settings.');
     } finally {
       setLoading(false);
@@ -151,7 +170,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setTimeout(() => onClose(), 1000);
       }
     } catch (err: any) {
-      console.error('Auth error:', err);
+      console.warn('Auth feedback:', err?.message || err);
       let msg = err?.message || 'Authentication failed.';
       if (msg.includes('auth/invalid-credential') || msg.includes('auth/wrong-password')) {
         msg = 'Invalid callsign or password. Please re-check.';
