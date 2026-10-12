@@ -306,7 +306,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                     </div>
 
                     <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
-                      <span className="text-[10px] text-zinc-500">HOTKEY [{wId === 'rifle' ? '1' : wId === 'railgun' ? '2' : wId === 'shotgun' ? '3' : wId === 'pistol' ? '4' : wId === 'melee' ? '5' : '6'}]</span>
+                      <span className="text-[10px] text-zinc-500">SLOT · {WEAPON_DEFINITIONS[wId].slot.toUpperCase()}</span>
                       <button
                         onClick={() => {
                           onSelectWeapon(wId);

@@ -9,7 +9,7 @@ import { WasmPhysicsCore, CS2MovementState } from './engine/wasm/WasmPhysicsCore
 import { GraphicsQualityManager, GraphicsPreset, GLSL_PARTICLE_SHADERS } from './engine/webgpu/WebGPUPipeline.ts';
 import { SpatialAudioEngine } from './engine/audio/SpatialAudioEngine.ts';
 import { MapGenerator } from './engine/graphics/MapGenerator.ts';
-import { WeaponSystem, WeaponType, WEAPON_DEFINITIONS } from './engine/weapons/WeaponSystem.ts';
+import { WeaponSystem, WeaponType, WEAPON_DEFINITIONS , Loadout, LOADOUT_SLOTS, sanitizeLoadout } from './engine/weapons/WeaponSystem.ts';
 import { P2PNetworkEngine, PlayerNetState, NetworkStatus, RemotePlayerRecord, PlayerInputPacket } from './engine/netcode/P2PNetworkEngine.ts';
 import { BotSimulation, SmartBotEntity, BotDifficulty } from './engine/netcode/BotSimulation.ts';
 import { HumanOperatorBuilder, HumanSkeleton } from './engine/graphics/HumanOperatorMesh.ts';
@@ -17,6 +17,7 @@ import { CinematicPipeline } from './engine/graphics/PostProcessing.ts';
 import { TacticalHUD, FloatingDamageNumber, KillFeedItem } from './components/HUD/TacticalHUD.tsx';
 import { SettingsModal } from './components/Modals/SettingsModal.tsx';
 import { LobbyModal } from './components/Modals/LobbyModal.tsx';
+import { LoadoutModal } from './components/Modals/LoadoutModal.tsx';
 import { ShopModal } from './components/Modals/ShopModal.tsx';
 import { ShopSystem, WeaponSkinId, CharacterHatId, SHOP_SKINS } from './engine/shop/ShopSystem.ts';
 import { SentinelAntiCheat } from './engine/anticheat/SentinelAntiCheat.ts';
@@ -103,6 +104,16 @@ export default function App() {
   const rawInputRef = useRef(SAVED.rawInput);
   rawInputRef.current = rawInput;
   const [renderResLabel, setRenderResLabel] = useState('');
+  // Loadout: one primary + one secondary + one melee, chosen on the deploy screen before a round / respawn
+  const [loadout, setLoadout] = useState<Loadout>(() => { try { return sanitizeLoadout(JSON.parse(localStorage.getItem('vanguard.loadout.v1') || 'null')); } catch { return sanitizeLoadout(null); } });
+  const loadoutRef = useRef(loadout);
+  loadoutRef.current = loadout;
+  useEffect(() => { try { localStorage.setItem('vanguard.loadout.v1', JSON.stringify(loadout)); } catch { /* ignore */ } }, [loadout]);
+  const [deployOpen, setDeployOpen] = useState(false);
+  const deployOpenRef = useRef(false);
+  deployOpenRef.current = deployOpen;
+  /** What to do when the player presses DEPLOY: start the session or respawn. */
+  const deployActionRef = useRef<(() => void) | null>(null);
   const [showDamageNumbers, setShowDamageNumbers] = useState(SAVED.showDamageNumbers);
   const showDamageNumbersRef = useRef(SAVED.showDamageNumbers);
   showDamageNumbersRef.current = showDamageNumbers;
@@ -390,9 +401,44 @@ export default function App() {
   const handleSelectWeapon = useCallback((w: WeaponType) => {
     const engine = engineRef.current;
     if (!engine) return;
+    // Equipping a weapon outside the current loadout replaces the weapon in its slot
+    const slot = WEAPON_DEFINITIONS[w].slot;
+    if (loadoutRef.current[slot] !== w) setLoadout(prev => ({ ...prev, [slot]: w }));
     if (engine.weaponSystem.currentWeapon !== w) engine.audioEngine.playWeaponSwitch();
     engine.weaponSystem.switchWeapon(w);
     setCurrentWeapon(w);
+  }, []);
+
+  /** Switch to loadout slot 1/2/3 (primary / secondary / melee). */
+  const selectLoadoutSlot = useCallback((idx: number) => {
+    const engine = engineRef.current;
+    if (!engine || engine.isDead) return;
+    const w = loadoutRef.current[LOADOUT_SLOTS[idx]];
+    if (!w) return;
+    if (engine.weaponSystem.currentWeapon !== w) engine.audioEngine.playWeaponSwitch();
+    engine.weaponSystem.switchWeapon(w);
+    setCurrentWeapon(w);
+  }, []);
+
+  /** Equip the current loadout's primary (round start / respawn). */
+  const equipLoadout = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const w = engine.weaponSystem;
+    for (const id of Object.keys(WEAPON_DEFINITIONS) as WeaponType[]) {
+      w.ammoInMag[id] = WEAPON_DEFINITIONS[id].magazineSize;
+    }
+    w.switchWeapon(loadoutRef.current.primary);
+    setCurrentWeapon(loadoutRef.current.primary);
+    setAmmo(w.ammoInMag[w.currentWeapon]);
+    setReserveAmmo(w.reserveAmmo[w.currentWeapon]);
+  }, []);
+
+  /** Open the deploy (loadout) screen; `then` runs when the player confirms. */
+  const openDeployScreen = useCallback((then: () => void) => {
+    deployActionRef.current = then;
+    setDeployOpen(true);
+    if (document.pointerLockElement) document.exitPointerLock();
   }, []);
 
   const requestPointerLock = useCallback(() => {
@@ -437,12 +483,12 @@ export default function App() {
       setBotsEnabled(true);
       applyBotVisibility(true);
       setChatMessages(prev => [...prev, { sender: 'MATCH CONTROL', text: 'Bot Skirmish started. First to 10 eliminations wins.', time: Date.now() }]);
-      requestPointerLock();
+      openDeployScreen(() => { equipLoadout(); requestPointerLock(); });
     } else if (mode === 'range') {
       setBotsEnabled(false);
       applyBotVisibility(false);
       setChatMessages(prev => [...prev, { sender: 'RANGE OFFICER', text: 'Shooting Range open. Enemies disabled — practice recoil, slides and slide-cancels freely.', time: Date.now() }]);
-      requestPointerLock();
+      openDeployScreen(() => { equipLoadout(); requestPointerLock(); });
     } else {
       setBotsEnabled(false);
       applyBotVisibility(false);
@@ -450,7 +496,7 @@ export default function App() {
       setChatMessages(prev => [...prev, { sender: 'VANGUARD NETWORK', text: 'Private match setup. Share your room code or join a friend.', time: Date.now() }]);
     }
     if (engine) engine.isDead = false;
-  }, [applyBotVisibility, requestPointerLock]);
+  }, [applyBotVisibility, requestPointerLock, openDeployScreen, equipLoadout]);
 
   const handleReturnToLobby = useCallback(() => {
     setSessionMode(null);
@@ -495,12 +541,13 @@ export default function App() {
     setRespawnCountdown(3);
 
     const w = engine.weaponSystem;
-    w.ammoInMag.rifle = 30;
-    w.ammoInMag.railgun = 5;
-    w.ammoInMag.shotgun = 30;
-    w.reserveAmmo.rifle = 90;
-    w.reserveAmmo.railgun = 20;
-    w.reserveAmmo.shotgun = 90;
+    for (const id of Object.keys(WEAPON_DEFINITIONS) as WeaponType[]) {
+      const d = WEAPON_DEFINITIONS[id];
+      w.ammoInMag[id] = d.magazineSize;
+      w.reserveAmmo[id] = Math.max(w.reserveAmmo[id], d.magazineSize * 3);
+    }
+    w.switchWeapon(loadoutRef.current.primary);
+    setCurrentWeapon(loadoutRef.current.primary);
     setAmmo(w.ammoInMag[w.currentWeapon]);
     setReserveAmmo(w.reserveAmmo[w.currentWeapon]);
 
@@ -535,8 +582,11 @@ export default function App() {
     let count = 3;
     setRespawnCountdown(count);
     const interval = setInterval(() => {
+      // Deploy screen open: hold the countdown at zero and let the player's DEPLOY button respawn
+      if (deployOpenRef.current) { setRespawnCountdown(0); return; }
+      if (!engineRef.current?.isDead) { clearInterval(interval); return; } // already redeployed
       count--;
-      setRespawnCountdown(count);
+      setRespawnCountdown(Math.max(0, count));
       if (count <= 0) {
         clearInterval(interval);
         handleRespawn();
@@ -1426,8 +1476,13 @@ export default function App() {
     else if (def.id === 'smg') engine.audioEngine.playSMG();
     else if (def.id === 'revolver') engine.audioEngine.playRevolver();
     else if (def.id === 'crossbow') engine.audioEngine.playCrossbow();
-    else if (def.id === 'melee') engine.audioEngine.playMeleeSwing();
     else if (def.id === 'rpg') engine.audioEngine.playRPGLaunch();
+    else if (def.id === 'lmg') engine.audioEngine.playAssaultRifle();
+    else if (def.id === 'dmr') engine.audioEngine.playRevolver();
+    else if (def.id === 'scattergun') engine.audioEngine.playShotgun();
+    else if (def.id === 'autopistol') engine.audioEngine.playSMG();
+    else if (def.id === 'dualies') engine.audioEngine.playPistol();
+    else if (def.isMelee) engine.audioEngine.playMeleeSwing();
 
     // Heavy CS2 Recoil Pitch Punch (Kicks view up! Player pulls down mouse to spray control)
     engine.punchPitch += def.recoilKickPitch * 0.65;
@@ -1679,6 +1734,7 @@ export default function App() {
       const engine = engineRef.current;
       if (!engine) return;
       if (!sessionModeRef.current) return;
+      if (deployOpenRef.current) return; // Deploy screen owns the keyboard
       const typing = (e.target as HTMLElement | null)?.tagName === 'INPUT' || (e.target as HTMLElement | null)?.tagName === 'TEXTAREA';
       if (typing) return;
 
@@ -1690,42 +1746,10 @@ export default function App() {
         engine.weaponSystem.reload();
       } else if (e.code === 'KeyF' && !engine.isDead) {
         engine.weaponSystem.inspect();
-      } else if (e.code === 'Digit1' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'rifle') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('rifle');
-        setCurrentWeapon('rifle');
-      } else if (e.code === 'Digit2' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'railgun') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('railgun');
-        setCurrentWeapon('railgun');
-      } else if (e.code === 'Digit3' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'shotgun') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('shotgun');
-        setCurrentWeapon('shotgun');
-      } else if (e.code === 'Digit4' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'pistol') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('pistol');
-        setCurrentWeapon('pistol');
-      } else if (e.code === 'Digit5' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'melee') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('melee');
-        setCurrentWeapon('melee');
-      } else if (e.code === 'Digit6' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'rpg') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('rpg');
-        setCurrentWeapon('rpg');
-      } else if (e.code === 'Digit7' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'smg') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('smg');
-        setCurrentWeapon('smg');
-      } else if (e.code === 'Digit8' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'revolver') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('revolver');
-        setCurrentWeapon('revolver');
-      } else if (e.code === 'Digit9' && !engine.isDead) {
-        if (engine.weaponSystem.currentWeapon !== 'crossbow') engine.audioEngine.playWeaponSwitch();
-        engine.weaponSystem.switchWeapon('crossbow');
-        setCurrentWeapon('crossbow');
+      } else if ((e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') && !engine.isDead) {
+        selectLoadoutSlot(Number(e.code.slice(-1)) - 1);
+      } else if (e.code === 'KeyL' && engine.isDead) {
+        openDeployScreen(() => { handleRespawn(); requestPointerLock(); });
       } else if (e.code === 'KeyB' && !engine.isDead) {
         setShopOpen(true);
       }
@@ -1734,8 +1758,9 @@ export default function App() {
     const handleWheel = (e: WheelEvent) => {
       const engine = engineRef.current;
       if (!engine || engine.isDead) return;
-      const arsenal: WeaponType[] = ['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg', 'smg', 'revolver', 'crossbow'];
-      const curIdx = arsenal.indexOf(engine.weaponSystem.currentWeapon);
+      const lo = loadoutRef.current;
+      const arsenal: WeaponType[] = [lo.primary, lo.secondary, lo.melee];
+      const curIdx = Math.max(0, arsenal.indexOf(engine.weaponSystem.currentWeapon));
       const nextIdx = e.deltaY > 0 ? (curIdx + 1) % arsenal.length : (curIdx - 1 + arsenal.length) % arsenal.length;
       const nextW = arsenal[nextIdx];
       engine.weaponSystem.switchWeapon(nextW);
@@ -1767,7 +1792,7 @@ export default function App() {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [mouseSens, fov, handleRespawn]);
+  }, [mouseSens, fov, handleRespawn, selectLoadoutSlot, openDeployScreen]);
 
   handleFireRef.current = handleFire;
 
@@ -1800,8 +1825,9 @@ export default function App() {
   }, [fov]);
   const cycleWeapon = useCallback((dir: 1 | -1) => {
     const engine = engineRef.current; if (!engine || engine.isDead) return;
-    const arsenal: WeaponType[] = ['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg', 'smg', 'revolver', 'crossbow'];
-    const curIdx = arsenal.indexOf(engine.weaponSystem.currentWeapon);
+    const lo = loadoutRef.current;
+    const arsenal: WeaponType[] = [lo.primary, lo.secondary, lo.melee];
+    const curIdx = Math.max(0, arsenal.indexOf(engine.weaponSystem.currentWeapon));
     const nextW = arsenal[(curIdx + dir + arsenal.length) % arsenal.length];
     engine.audioEngine.playWeaponSwitch();
     engine.weaponSystem.switchWeapon(nextW);
@@ -2029,6 +2055,8 @@ export default function App() {
         onOpenShop={() => setShopOpen(true)}
         killStreak={killStreak}
         onSelectWeaponSlot={handleSelectWeapon}
+        loadout={loadout}
+        onChangeLoadout={() => openDeployScreen(() => { handleRespawn(); requestPointerLock(); })}
       />}
 
       <ShopModal
@@ -2128,9 +2156,20 @@ export default function App() {
         onBotDifficultyChange={handleSetBotDifficulty}
       />
 
+      <LoadoutModal
+        isOpen={deployOpen}
+        loadout={loadout}
+        onChange={setLoadout}
+        onDeploy={() => {
+          setDeployOpen(false);
+          const act = deployActionRef.current;
+          deployActionRef.current = null;
+          act?.();
+        }}
+      />
       <LobbyModal
         isOpen={lobbyOpen}
-        onClose={() => { setLobbyOpen(false); if (sessionMode === 'friends') requestPointerLock(); }}
+        onClose={() => { setLobbyOpen(false); if (sessionMode === 'friends') openDeployScreen(() => { equipLoadout(); requestPointerLock(); }); }}
         roomId={roomCode}
         isHost={isHostSession}
         isConnected={networkStatus === 'connected'}

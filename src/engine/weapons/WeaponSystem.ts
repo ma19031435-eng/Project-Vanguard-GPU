@@ -6,12 +6,24 @@
 import * as THREE from 'three';
 import { WeaponSkinId, SHOP_SKINS } from '../shop/ShopSystem.ts';
 
-export type WeaponType = 'rifle' | 'railgun' | 'shotgun' | 'pistol' | 'melee' | 'rpg' | 'smg' | 'revolver' | 'crossbow';
+export type WeaponType =
+  | 'rifle' | 'railgun' | 'shotgun' | 'pistol' | 'melee' | 'rpg' | 'smg' | 'revolver' | 'crossbow'
+  | 'lmg' | 'dmr' | 'scattergun' | 'autopistol' | 'dualies' | 'sledge' | 'knife';
+
+/** Loadout slot a weapon occupies. A loadout = one primary + one secondary + one melee. */
+export type WeaponSlot = 'primary' | 'secondary' | 'melee';
+
+export interface Loadout { primary: WeaponType; secondary: WeaponType; melee: WeaponType; }
+export const DEFAULT_LOADOUT: Loadout = { primary: 'rifle', secondary: 'pistol', melee: 'melee' };
+export const LOADOUT_SLOTS: WeaponSlot[] = ['primary', 'secondary', 'melee'];
 
 export interface WeaponDef {
   id: WeaponType;
   name: string;
   category: string;
+  slot: WeaponSlot;
+  /** One-line role description for the deploy screen. */
+  role: string;
   damage: number;
   headshotMultiplier: number;
   fireRateRpm: number;
@@ -36,6 +48,8 @@ export interface WeaponDef {
 export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   rifle: {
     id: 'rifle',
+    slot: 'primary',
+    role: 'All-rounder. Controllable spray, lethal headshots.',
     adsZoom: 0.8,
     isAutomatic: true,
     name: 'AK-47 Tactical',
@@ -56,6 +70,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   railgun: {
     id: 'railgun',
+    slot: 'primary',
+    role: 'One-shot body at any range. Slow, punishing misses.',
     adsZoom: 0.4,
     name: 'AWP Heavy Sniper',
     category: 'Precision Bolt-Action (1-Shot Body)',
@@ -75,6 +91,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   smg: {
     id: 'smg',
+    slot: 'primary',
+    role: 'Sprint-and-spray. Wins close fights, falls off at range.',
     adsZoom: 0.86,
     isAutomatic: true,
     name: 'SMG (Run N Gun)',
@@ -95,6 +113,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   shotgun: {
     id: 'shotgun',
+    slot: 'primary',
+    role: 'Pump buckshot. Deletes anything inside 10 m.',
     adsZoom: 0.9,
     name: 'SPAS-12 Pump Shotgun',
     category: 'Heavy Close-Quarters Buckshot',
@@ -114,6 +134,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   pistol: {
     id: 'pistol',
+    slot: 'secondary',
+    role: 'Heavy sidearm. Two body shots, one to the head.',
     adsZoom: 0.8,
     name: 'Desert Eagle .50',
     category: 'Heavy Tactical Handgun',
@@ -133,6 +155,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   revolver: {
     id: 'revolver',
+    slot: 'secondary',
+    role: 'Precision hand cannon. Slow, rewards accuracy.',
     adsZoom: 0.72,
     name: 'Six-Shooter Revolver',
     category: 'Precision Marksman Cannon',
@@ -152,6 +176,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   crossbow: {
     id: 'crossbow',
+    slot: 'primary',
+    role: 'Silent one-shot headshots. Single bolt, re-nock between shots.',
     adsZoom: 0.62,
     name: 'Bowman Crossbow',
     category: 'Silent Precision Projectile',
@@ -171,6 +197,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   melee: {
     id: 'melee',
+    slot: 'melee',
+    role: 'Fast blade. Two swings to kill.',
     adsZoom: 1.0,
     isAutomatic: true,
     name: 'Cyber Katana',
@@ -192,6 +220,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   rpg: {
     id: 'rpg',
+    slot: 'primary',
+    role: 'Splash damage. One rocket, long reload.',
     adsZoom: 0.85,
     name: 'RPG-7 Warhead',
     category: 'High-Explosive Rocket Launcher',
@@ -209,8 +239,172 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
     range: 220,
     color: '#ff3333',
     isExplosive: true
+  },
+  lmg: {
+    id: 'lmg',
+    slot: 'primary',
+    role: 'Suppression. 100-round belt, heavy recoil, very long reload.',
+    adsZoom: 0.85,
+    isAutomatic: true,
+    name: 'Bulwark LMG',
+    category: 'Light Machine Gun (Sustained Fire)',
+    damage: 29,
+    headshotMultiplier: 2.5,
+    fireRateRpm: 760,
+    magazineSize: 100,
+    reloadTimeSec: 4.6,
+    baseSpread: 0.012,
+    movingSpreadPenalty: 0.14,
+    recoilKickPitch: 0.06,
+    recoilKickYaw: 0.02,
+    recoilKickZ: 0.09,
+    pelletCount: 1,
+    range: 150,
+    color: '#8fd16a'
+  },
+  dmr: {
+    id: 'dmr',
+    slot: 'primary',
+    role: 'Semi-auto marksman. Two body shots, one headshot, fast follow-up.',
+    adsZoom: 0.55,
+    name: 'Longshot DMR',
+    category: 'Designated Marksman Rifle',
+    damage: 62,
+    headshotMultiplier: 2.2,
+    fireRateRpm: 300,
+    magazineSize: 12,
+    reloadTimeSec: 2.3,
+    baseSpread: 0.0012,
+    movingSpreadPenalty: 0.12,
+    recoilKickPitch: 0.07,
+    recoilKickYaw: 0.006,
+    recoilKickZ: 0.14,
+    pelletCount: 1,
+    range: 260,
+    color: '#7cc8ff'
+  },
+  scattergun: {
+    id: 'scattergun',
+    slot: 'primary',
+    role: 'Double-barrel. Two devastating shells, then a quick break-open reload.',
+    adsZoom: 0.95,
+    name: 'Twin-Bore Scattergun',
+    category: 'Break-Action Double Barrel',
+    damage: 22,
+    headshotMultiplier: 1.4,
+    fireRateRpm: 190,
+    magazineSize: 2,
+    reloadTimeSec: 1.5,
+    baseSpread: 0.07,
+    movingSpreadPenalty: 0.04,
+    recoilKickPitch: 0.16,
+    recoilKickYaw: 0.02,
+    recoilKickZ: 0.3,
+    pelletCount: 11,
+    range: 32,
+    color: '#ffa552'
+  },
+  autopistol: {
+    id: 'autopistol',
+    slot: 'secondary',
+    role: 'Full-auto machine pistol. Melts up close, empties in a second.',
+    adsZoom: 0.9,
+    isAutomatic: true,
+    name: 'Viper Machine Pistol',
+    category: 'Automatic Sidearm',
+    damage: 19,
+    headshotMultiplier: 2.0,
+    fireRateRpm: 1050,
+    magazineSize: 21,
+    reloadTimeSec: 1.7,
+    baseSpread: 0.02,
+    movingSpreadPenalty: 0.06,
+    recoilKickPitch: 0.03,
+    recoilKickYaw: 0.02,
+    recoilKickZ: 0.05,
+    pelletCount: 1,
+    range: 60,
+    color: '#f472b6'
+  },
+  dualies: {
+    id: 'dualies',
+    slot: 'secondary',
+    role: 'Akimbo pistols. Big magazine, alternating fire, loose accuracy.',
+    adsZoom: 1.0,
+    isAutomatic: true,
+    name: 'Gemini Akimbo',
+    category: 'Dual-Wield Pistols',
+    damage: 25,
+    headshotMultiplier: 2.2,
+    fireRateRpm: 640,
+    magazineSize: 26,
+    reloadTimeSec: 2.4,
+    baseSpread: 0.025,
+    movingSpreadPenalty: 0.05,
+    recoilKickPitch: 0.035,
+    recoilKickYaw: 0.03,
+    recoilKickZ: 0.06,
+    pelletCount: 1,
+    range: 70,
+    color: '#c4b5fd'
+  },
+  sledge: {
+    id: 'sledge',
+    slot: 'melee',
+    role: 'Two-handed hammer. One swing kills, but it is slow.',
+    isAutomatic: true,
+    name: 'Breaker Sledgehammer',
+    category: 'Heavy Melee',
+    damage: 150,
+    headshotMultiplier: 1.0,
+    fireRateRpm: 55,
+    magazineSize: 1,
+    reloadTimeSec: 0.1,
+    baseSpread: 0,
+    movingSpreadPenalty: 0,
+    recoilKickPitch: 0.06,
+    recoilKickYaw: 0.0,
+    recoilKickZ: 0.0,
+    pelletCount: 1,
+    range: 3.4,
+    color: '#d6d3d1',
+    isMelee: true
+  },
+  knife: {
+    id: 'knife',
+    slot: 'melee',
+    role: 'Fastest swing in the game. Three hits to kill, lets you run at full speed.',
+    isAutomatic: true,
+    name: 'Fang Combat Knife',
+    category: 'Light Melee',
+    damage: 40,
+    headshotMultiplier: 1.0,
+    fireRateRpm: 240,
+    magazineSize: 1,
+    reloadTimeSec: 0.1,
+    baseSpread: 0,
+    movingSpreadPenalty: 0,
+    recoilKickPitch: 0.01,
+    recoilKickYaw: 0.0,
+    recoilKickZ: 0.0,
+    pelletCount: 1,
+    range: 2.6,
+    color: '#fde68a',
+    isMelee: true
   }
 };
+
+export const ALL_WEAPONS: WeaponType[] = Object.keys(WEAPON_DEFINITIONS) as WeaponType[];
+export const weaponsForSlot = (slot: WeaponSlot): WeaponType[] => ALL_WEAPONS.filter(w => WEAPON_DEFINITIONS[w].slot === slot);
+export const isMeleeWeapon = (w: WeaponType): boolean => !!WEAPON_DEFINITIONS[w].isMelee;
+export function sanitizeLoadout(raw: unknown): Loadout {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const pick = (slot: WeaponSlot, def: WeaponType): WeaponType => {
+    const v = r[slot] as WeaponType;
+    return typeof v === 'string' && WEAPON_DEFINITIONS[v]?.slot === slot ? v : def;
+  };
+  return { primary: pick('primary', DEFAULT_LOADOUT.primary), secondary: pick('secondary', DEFAULT_LOADOUT.secondary), melee: pick('melee', DEFAULT_LOADOUT.melee) };
+}
 
 export class WeaponSystem {
   public camera: THREE.Camera;
@@ -228,7 +422,14 @@ export class WeaponSystem {
     rpg: 1,
     smg: 35,
     revolver: 6,
-    crossbow: 1
+    crossbow: 1,
+    lmg: 100,
+    dmr: 12,
+    scattergun: 2,
+    autopistol: 21,
+    dualies: 26,
+    sledge: 1,
+    knife: 1
   };
   public reserveAmmo: Record<WeaponType, number> = {
     rifle: 90,
@@ -239,7 +440,14 @@ export class WeaponSystem {
     rpg: 4,
     smg: 140,
     revolver: 36,
-    crossbow: 15
+    crossbow: 15,
+    lmg: 200,
+    dmr: 48,
+    scattergun: 24,
+    autopistol: 84,
+    dualies: 104,
+    sledge: 999,
+    knife: 999
   };
 
   // State
@@ -784,6 +992,150 @@ export class WeaponSystem {
     xbowGroup.visible = false;
     this.viewmodelRoot.add(xbowGroup);
     this.weaponMeshes.set('crossbow', xbowGroup);
+
+    // ------------------------------------------------------------------ expansion roster
+    const finish = (g: THREE.Group, id: WeaponType, pos: [number, number, number]) => {
+      g.position.set(pos[0], pos[1], pos[2]);
+      g.visible = false;
+      this.viewmodelRoot.add(g);
+      this.weaponMeshes.set(id, g);
+    };
+    const box = (w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0, name?: string) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(x, y, z);
+      if (name) m.name = name;
+      return m;
+    };
+    const cyl = (r: number, len: number, mat: THREE.Material, x = 0, y = 0, z = 0, name?: string) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 12), mat);
+      m.rotation.x = Math.PI / 2;
+      m.position.set(x, y, z);
+      if (name) m.name = name;
+      return m;
+    };
+
+    // 10. Bulwark LMG - long heavy receiver, box belt-feed, bipod, thick barrel shroud
+    {
+      const g = new THREE.Group();
+      const skin = steelBaseMat.clone(); skin.color.setHex(0x2e3a2a); this.activeSkinMaterials.push(skin);
+      g.add(box(0.09, 0.13, 0.6, skin, 0, 0, -0.02));
+      g.add(box(0.14, 0.12, 0.16, darkSteelMat, -0.08, -0.08, -0.02, 'mag')); // belt box, side-mounted
+      g.add(box(0.05, 0.14, 0.07, darkSteelMat, 0, -0.1, 0.12)); // pistol grip
+      g.add(box(0.07, 0.11, 0.2, darkSteelMat, 0, -0.01, 0.38)); // stock
+      g.add(cyl(0.028, 0.6, darkSteelMat, 0, 0.03, -0.6)); // barrel
+      g.add(box(0.07, 0.07, 0.42, darkSteelMat, 0, 0.03, -0.5)); // shroud
+      for (const sx of [-1, 1]) { const leg = box(0.015, 0.2, 0.015, darkSteelMat, sx * 0.04, -0.1, -0.62); leg.rotation.z = sx * 0.25; g.add(leg); }
+      g.add(box(0.03, 0.06, 0.03, darkSteelMat, 0, 0.09, 0.0, 'bolt')); // charging handle
+      g.add(box(0.018, 0.05, 0.02, darkSteelMat, 0, 0.09, -0.86)); // front sight
+      const arms = this.createOperatorArms([0.24, -0.2, -0.48], { right: [0, -0.12, 0.12], left: [0, -0.04, -0.4] });
+      g.add(arms.armLeft, arms.armRight);
+      finish(g, 'lmg', [0.24, -0.2, -0.48]);
+    }
+
+    // 11. Longshot DMR - slim receiver, mid-power scope, long fluted barrel, skeleton stock
+    {
+      const g = new THREE.Group();
+      const skin = steelBaseMat.clone(); skin.color.setHex(0x3a3f4a); this.activeSkinMaterials.push(skin);
+      g.add(box(0.07, 0.1, 0.5, skin, 0, 0, -0.05));
+      g.add(box(0.045, 0.2, 0.08, darkSteelMat, 0, -0.12, -0.02, 'mag'));
+      g.add(box(0.05, 0.13, 0.07, darkSteelMat, 0, -0.09, 0.1)); // grip
+      g.add(box(0.05, 0.08, 0.22, darkSteelMat, 0, 0.0, 0.36)); // stock
+      g.add(box(0.06, 0.07, 0.3, darkSteelMat, 0, 0.0, -0.42)); // handguard
+      g.add(cyl(0.016, 0.55, darkSteelMat, 0, 0.03, -0.75));
+      g.add(cyl(0.03, 0.22, darkSteelMat, 0, 0.11, -0.12)); // scope tube
+      const lens = cyl(0.028, 0.02, new THREE.MeshStandardMaterial({ color: 0x66ccff, emissive: 0x114466, roughness: 0.1, metalness: 0.4 }), 0, 0.11, -0.24);
+      g.add(lens);
+      g.add(box(0.012, 0.03, 0.05, darkSteelMat, 0.04, 0.05, 0.0, 'bolt')); // charging handle
+      const arms = this.createOperatorArms([0.24, -0.22, -0.5], { right: [0, -0.1, 0.1], left: [0, -0.04, -0.45] });
+      g.add(arms.armLeft, arms.armRight);
+      finish(g, 'dmr', [0.24, -0.22, -0.5]);
+    }
+
+    // 12. Twin-Bore Scattergun - side-by-side barrels, break-action breech, wooden stock
+    {
+      const g = new THREE.Group();
+      const skin = steelBaseMat.clone(); skin.color.setHex(0x3b2f2a); this.activeSkinMaterials.push(skin);
+      const breech = new THREE.Group(); breech.name = 'breech'; breech.position.set(0, 0, -0.12);
+      for (const sx of [-1, 1]) breech.add(cyl(0.022, 0.62, darkSteelMat, sx * 0.025, 0.02, -0.31));
+      breech.add(box(0.075, 0.06, 0.16, woodMat, 0, -0.01, -0.22)); // fore-end
+      g.add(breech);
+      g.add(box(0.08, 0.09, 0.14, skin, 0, 0.0, -0.05)); // receiver
+      g.add(box(0.05, 0.12, 0.07, woodMat, 0, -0.09, 0.05)); // grip
+      g.add(box(0.06, 0.1, 0.26, woodMat, 0, -0.02, 0.26)); // stock
+      g.add(box(0.03, 0.025, 0.08, darkSteelMat, 0, 0.065, -0.02, 'bolt')); // top lever
+      const arms = this.createOperatorArms([0.23, -0.21, -0.46], { right: [0, -0.1, 0.05], left: [0, -0.04, -0.36] });
+      g.add(arms.armLeft, arms.armRight);
+      finish(g, 'scattergun', [0.23, -0.21, -0.46]);
+    }
+
+    // 13. Viper Machine Pistol - compact slide, extended magazine, folding stock stub
+    {
+      const g = new THREE.Group();
+      const skin = steelBaseMat.clone(); skin.color.setHex(0x23262d); skin.roughness = 0.2; this.activeSkinMaterials.push(skin);
+      g.add(box(0.06, 0.07, 0.3, skin, 0, 0.04, -0.12, 'slide'));
+      g.add(box(0.062, 0.06, 0.24, darkSteelMat, 0, -0.01, -0.09)); // frame
+      g.add(box(0.055, 0.17, 0.085, darkSteelMat, 0, -0.1, -0.01)); // grip
+      g.add(box(0.04, 0.16, 0.05, darkSteelMat, 0, -0.26, -0.01, 'mag')); // extended mag below grip
+      g.add(box(0.03, 0.03, 0.08, darkSteelMat, 0, 0.0, 0.1)); // stock stub
+      g.add(cyl(0.013, 0.08, darkSteelMat, 0, 0.045, -0.3));
+      const arms = this.createOperatorArms([0.22, -0.2, -0.42], { right: [0, -0.12, -0.01], left: [-0.045, -0.14, -0.03] });
+      g.add(arms.armLeft, arms.armRight);
+      finish(g, 'autopistol', [0.22, -0.2, -0.42]);
+    }
+
+    // 14. Gemini Akimbo - two pistols, one per hand (left mirrored)
+    {
+      const g = new THREE.Group();
+      const skin = steelBaseMat.clone(); skin.color.setHex(0x4b4e6d); skin.metalness = 0.95; skin.roughness = 0.18; this.activeSkinMaterials.push(skin);
+      const mkPistol = (x: number, mirror: boolean) => {
+        const p = new THREE.Group();
+        p.add(box(0.055, 0.07, 0.3, skin, 0, 0.04, -0.13, 'slide'));
+        p.add(box(0.058, 0.055, 0.22, darkSteelMat, 0, -0.01, -0.1));
+        const grip = box(0.05, 0.16, 0.08, darkSteelMat, 0, -0.08, -0.01); grip.rotation.x = -0.25; p.add(grip);
+        p.add(box(0.04, 0.06, 0.05, darkSteelMat, 0, -0.17, -0.02, 'mag'));
+        p.add(cyl(0.012, 0.06, darkSteelMat, 0, 0.045, -0.3));
+        p.position.x = x;
+        p.rotation.z = mirror ? 0.08 : -0.08;
+        return p;
+      };
+      g.add(mkPistol(0.0, false));
+      g.add(mkPistol(-0.42, true));
+      // Two independent one-handed arms
+      const right = this.createOperatorArms([0.22, -0.2, -0.42], { right: [0, -0.12, -0.01] }).armRight;
+      const left = this.createOperatorArms([0.22, -0.2, -0.42], { right: [0, 0, 0], left: [-0.42, -0.12, -0.01] }).armLeft;
+      g.add(right, left);
+      finish(g, 'dualies', [0.22, -0.2, -0.42]);
+    }
+
+    // 15. Breaker Sledgehammer - long haft, massive steel head carried over the shoulder
+    {
+      const g = new THREE.Group();
+      const headMat = steelBaseMat.clone(); headMat.color.setHex(0x55595f); headMat.roughness = 0.5; this.activeSkinMaterials.push(headMat);
+      const haft = cyl(0.02, 0.9, woodMat, 0, 0.0, -0.2); g.add(haft);
+      g.add(box(0.12, 0.12, 0.22, headMat, 0, 0.0, -0.62));
+      g.add(box(0.13, 0.13, 0.03, darkSteelMat, 0, 0.0, -0.74));
+      g.add(box(0.13, 0.13, 0.03, darkSteelMat, 0, 0.0, -0.5));
+      g.add(cyl(0.028, 0.14, darkSteelMat, 0, 0.0, 0.18)); // grip wrap
+      const arms = this.createOperatorArms([0.2, -0.22, -0.4], { right: [0, 0.0, 0.16], left: [0, 0.0, -0.05] });
+      g.add(arms.armLeft, arms.armRight);
+      g.rotation.set(-0.35, 0.25, 0.1);
+      finish(g, 'sledge', [0.2, -0.22, -0.4]);
+    }
+
+    // 16. Fang Combat Knife - short blade, serrated spine, reverse grip
+    {
+      const g = new THREE.Group();
+      const edgeMat = new THREE.MeshStandardMaterial({ color: 0xdadde3, metalness: 0.95, roughness: 0.12 });
+      this.activeSkinMaterials.push(edgeMat);
+      const blade = box(0.012, 0.045, 0.26, edgeMat, 0, 0.03, -0.2); g.add(blade);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.07, 4), edgeMat); tip.rotation.x = -Math.PI / 2; tip.rotation.z = Math.PI / 4; tip.position.set(0, 0.03, -0.36); g.add(tip);
+      g.add(box(0.05, 0.06, 0.02, darkSteelMat, 0, 0.03, -0.07)); // guard
+      g.add(box(0.03, 0.035, 0.14, darkSteelMat, 0, 0.03, 0.01)); // handle
+      const arms = this.createOperatorArms([0.2, -0.22, -0.4], { right: [0, 0.03, 0.02] });
+      g.add(arms.armRight);
+      g.rotation.set(0.1, -0.5, 0.2);
+      finish(g, 'knife', [0.2, -0.22, -0.4]);
+    }
   }
 
   public switchWeapon(type: WeaponType): void {
@@ -801,7 +1153,7 @@ export class WeaponSystem {
 
   public canFire(): boolean {
     if (this.isReloading) return false;
-    if (this.currentWeapon !== 'melee' && this.ammoInMag[this.currentWeapon] <= 0) return false;
+    if (!isMeleeWeapon(this.currentWeapon) && this.ammoInMag[this.currentWeapon] <= 0) return false;
 
     const def = WEAPON_DEFINITIONS[this.currentWeapon];
     const fireIntervalMs = (60 / def.fireRateRpm) * 1000;
@@ -814,7 +1166,7 @@ export class WeaponSystem {
     const def = WEAPON_DEFINITIONS[this.currentWeapon];
     this.lastFireTime = performance.now();
     this.inspectT = -1;
-    if (this.currentWeapon !== 'melee') {
+    if (!isMeleeWeapon(this.currentWeapon)) {
       this.ammoInMag[this.currentWeapon]--;
     }
     this.shotSequence++;
@@ -825,7 +1177,7 @@ export class WeaponSystem {
     this.recoilRot.x += def.recoilKickPitch;
     this.recoilRot.y += sprayY;
 
-    if (this.currentWeapon === 'melee') {
+    if (isMeleeWeapon(this.currentWeapon)) {
       this.meleeSlashAnim = 1.0;
     }
 
@@ -843,7 +1195,7 @@ export class WeaponSystem {
   }
 
   public reload(): boolean {
-    if (this.isReloading || this.currentWeapon === 'melee') return false;
+    if (this.isReloading || isMeleeWeapon(this.currentWeapon)) return false;
     const def = WEAPON_DEFINITIONS[this.currentWeapon];
     if (this.ammoInMag[this.currentWeapon] >= def.magazineSize) return false;
     if (this.reserveAmmo[this.currentWeapon] <= 0) return false;
@@ -957,8 +1309,9 @@ export class WeaponSystem {
       }
 
       // Rest position in front-right viewport (elevated so weapon is prominently visible)
-      const defaultRestX = this.currentWeapon === 'melee' ? 0.18 : (this.currentWeapon === 'rpg' ? 0.22 : 0.20);
-      const defaultRestY = this.currentWeapon === 'rpg' ? -0.14 : (this.currentWeapon === 'melee' ? -0.16 : -0.15);
+      const isMeleeNow = isMeleeWeapon(this.currentWeapon);
+      const defaultRestX = isMeleeNow ? 0.18 : (this.currentWeapon === 'rpg' ? 0.22 : 0.20);
+      const defaultRestY = this.currentWeapon === 'rpg' ? -0.14 : (isMeleeNow ? -0.16 : -0.15);
       const defaultRestZ = -0.36;
 
       const restPos = this.isADS
@@ -1255,12 +1608,41 @@ export class WeaponSystem {
         this.stage('boltIn', p, 0.84);
         break;
       }
-      case 'melee': {
-        // Blade flourish.
+      case 'melee':
+      case 'knife':
+      case 'sledge': {
+        // Blade / hammer flourish.
         const spin = P(p, 0, 1);
         pose.rot.y = -1.2 * spin;
         pose.rot.z = 0.8 * spin;
         this.stage('flourish', p, 0.05);
+        break;
+      }
+      case 'scattergun': {
+        // Break open, shells out, two fresh shells in, snap shut.
+        const open = P(p, 0.0, 1.0);
+        pose.rot.x = 0.35 * open;
+        pose.rot.z = -0.25 * open;
+        pose.pos.y = -0.05 * open;
+        set('breech', (o, b) => { o.rotation.x = b.rot.x + 0.6 * R(p, 0.05, 0.25) * (1 - R(p, 0.8, 0.95)); });
+        this.stage('magOut', p, 0.3);
+        this.stage('magIn', p, 0.7);
+        this.stage('bolt', p, 0.92);
+        break;
+      }
+      default: {
+        // Generic: tilt inward, drop magazine, seat a fresh one, rack.
+        const tilt = P(p, 0.0, 1.0);
+        pose.rot.z = -0.5 * tilt;
+        pose.rot.x = 0.2 * tilt;
+        pose.pos.y = -0.04 * tilt;
+        const out = R(p, 0.08, 0.3);
+        const back = R(p, 0.5, 0.75);
+        set('mag', (o, b) => { o.position.y = b.pos.y - 0.22 * (out - back); o.rotation.x = b.rot.x + 0.3 * (out - back); });
+        offhand((o, b) => { o.position.y = b.pos.y - 0.2 * (out - back); });
+        this.stage('magOut', p, 0.3);
+        this.stage('magIn', p, 0.72);
+        this.stage('bolt', p, 0.9);
         break;
       }
     }

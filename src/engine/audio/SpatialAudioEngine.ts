@@ -660,7 +660,14 @@ export class SpatialAudioEngine {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const d = this.sfxGain!;
-    const key = `${weapon}:${stage}`;
+    // New roster shares foley families with the closest classic weapon
+    const family: Record<string, string> = { lmg: 'rifle', dmr: 'railgun', scattergun: 'shotgun', autopistol: 'smg', dualies: 'pistol', sledge: 'melee', knife: 'melee' };
+    const fam = family[weapon] ?? weapon;
+    let key = `${fam}:${stage}`;
+    if (fam === 'shotgun' && stage === 'magOut') key = 'shotgun:shell0';
+    if (fam === 'shotgun' && stage === 'magIn') key = 'shotgun:shell1';
+    if (fam === 'shotgun' && stage === 'bolt') key = 'shotgun:pump';
+    if (fam === 'railgun' && stage === 'bolt') key = 'railgun:boltClose';
 
     switch (key) {
       // --- Assault rifle: heavy steel mag, loud charging handle ---

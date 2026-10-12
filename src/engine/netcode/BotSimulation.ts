@@ -96,7 +96,7 @@ export class BotSimulation {
       'Specialist-Bravo [Bot]', 
       'Sentry-Alpha [Bot]'
     ];
-    const loadouts: WeaponType[] = ['rifle', 'shotgun', 'rifle', 'railgun', 'rifle'];
+    const loadouts: WeaponType[] = ['rifle', 'shotgun', 'smg', 'railgun', 'lmg', 'dmr', 'rifle', 'scattergun'];
 
     for (let i = 0; i < count; i++) {
       const id = 'bot_' + Math.random().toString(36).substring(2, 7);
@@ -159,7 +159,7 @@ export class BotSimulation {
       'Specialist-Bravo [Bot]', 
       'Sentry-Alpha [Bot]'
     ];
-    const loadouts: WeaponType[] = ['rifle', 'shotgun', 'rifle', 'railgun', 'rifle'];
+    const loadouts: WeaponType[] = ['rifle', 'shotgun', 'smg', 'railgun', 'lmg', 'dmr', 'rifle', 'scattergun'];
 
     for (let i = 0; i < count; i++) {
       const id = 'bot_' + Math.random().toString(36).substring(2, 7);

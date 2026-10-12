@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Trophy, Flame, Sword, Settings, Users, Coins, Bot, ShieldCheck } from 'lucide-react';
-import { WeaponType, WEAPON_DEFINITIONS } from '../../engine/weapons/WeaponSystem.ts';
+import { WeaponType, WEAPON_DEFINITIONS , Loadout, DEFAULT_LOADOUT } from '../../engine/weapons/WeaponSystem.ts';
 import { PlayerNetState } from '../../engine/netcode/P2PNetworkEngine.ts';
 import { GraphicsPreset } from '../../engine/webgpu/WebGPUPipeline.ts';
 
@@ -77,6 +77,8 @@ interface TacticalHUDProps {
   onOpenShop?: () => void;
   killStreak?: number;
   onSelectWeaponSlot?: (weapon: WeaponType) => void;
+  loadout?: Loadout;
+  onChangeLoadout?: () => void;
   kills?: number;
   deaths?: number;
   targetKills?: number;
@@ -131,6 +133,8 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   onOpenShop,
   killStreak = 0,
   onSelectWeaponSlot,
+  loadout,
+  onChangeLoadout,
   kills,
   deaths,
   targetKills = 10,
@@ -170,8 +174,12 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   const lowAmmo = !currentWeaponDef.isMelee && ammo <= Math.max(1, Math.ceil(currentWeaponDef.magazineSize * 0.25));
   const hpPct = Math.max(0, Math.min(100, health));
   const armorPct = Math.max(0, Math.min(100, armor));
-  const arsenal: WeaponType[] = ['rifle', 'railgun', 'shotgun', 'pistol', 'melee', 'rpg', 'smg', 'revolver', 'crossbow'];
-  const shortNames: Record<WeaponType, string> = { rifle: 'AK', railgun: 'AWP', shotgun: 'SPAS', pistol: 'DE', melee: 'BLADE', rpg: 'RPG', smg: 'SMG', revolver: 'REV', crossbow: 'BOW' };
+  const lo = loadout ?? DEFAULT_LOADOUT;
+  const arsenal: WeaponType[] = [lo.primary, lo.secondary, lo.melee];
+  const shortNames: Record<WeaponType, string> = {
+    rifle: 'AK', railgun: 'AWP', shotgun: 'SPAS', pistol: 'DE', melee: 'BLADE', rpg: 'RPG', smg: 'SMG', revolver: 'REV', crossbow: 'BOW',
+    lmg: 'LMG', dmr: 'DMR', scattergun: 'TWIN', autopistol: 'VIPER', dualies: 'AKIMBO', sledge: 'SLEDGE', knife: 'KNIFE'
+  };
 
   // Shared surfaces — soft gradient panels instead of boxed cards
   const panelL = 'bg-gradient-to-r from-black/70 via-black/45 to-transparent';
@@ -499,9 +507,16 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
           <div className="text-[11px] tracking-[0.5em] text-red-300/80 mb-2">ELIMINATED</div>
           <div className="text-3xl font-black tracking-wide mb-1">by {killerName}</div>
           <div className={`text-white/50 text-sm mb-8 ${num}`}>Redeploying in {respawnCountdown}s</div>
-          <button onClick={onRespawn} className="px-8 py-3 rounded-lg bg-white text-black font-black text-sm tracking-wide hover:bg-cyan-200 transition">
-            DEPLOY NOW <span className="text-black/50 font-semibold ml-1">SPACE</span>
-          </button>
+          <div className="flex gap-3">
+            <button onClick={onRespawn} className="px-8 py-3 rounded-lg bg-white text-black font-black text-sm tracking-wide hover:bg-cyan-200 transition">
+              DEPLOY NOW <span className="text-black/50 font-semibold ml-1">SPACE</span>
+            </button>
+            {onChangeLoadout && (
+              <button onClick={onChangeLoadout} className="px-6 py-3 rounded-lg bg-white/10 border border-white/30 text-white font-black text-sm tracking-wide hover:bg-white/20 transition">
+                CHANGE LOADOUT <span className="text-white/50 font-semibold ml-1">L</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
