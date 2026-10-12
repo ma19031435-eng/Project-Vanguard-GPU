@@ -64,6 +64,15 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastPointerLockExit = useRef<number>(0);
   const lastDamageTimeRef = useRef<number>(0);
+  const lastShotTimeRef = useRef<number>(0);
+  const matchStatsRef = useRef({ shots: 0, hits: 0, headshots: 0, damage: 0, bestStreak: 0, startTime: Date.now() });
+  const [matchStats, setMatchStats] = useState({ shots: 0, hits: 0, headshots: 0, damage: 0, bestStreak: 0, durationSec: 0 });
+  const [cameraShake, setCameraShake] = useState(SAVED.cameraShake);
+  const cameraShakeRef = useRef(SAVED.cameraShake);
+  cameraShakeRef.current = cameraShake;
+  const [showDamageNumbers, setShowDamageNumbers] = useState(SAVED.showDamageNumbers);
+  const showDamageNumbersRef = useRef(SAVED.showDamageNumbers);
+  showDamageNumbersRef.current = showDamageNumbers;
   const regenAccumulatorRef = useRef<number>(0);
 
   // Shop & Anti-Cheat Subsystems
@@ -151,7 +160,9 @@ export default function App() {
   const [fov, setFov] = useState(SAVED.fov);
   const [masterVol, setMasterVol] = useState(SAVED.masterVol);
   const [contextLost, setContextLost] = useState(false);
-  const [isMobile, setIsMobile] = useState<boolean>(() => detectTouchDevice());
+  const [touchMode, setTouchMode] = useState<'auto' | 'on' | 'off'>(SAVED.touchMode);
+  const [autoMobile, setAutoMobile] = useState<boolean>(() => detectTouchDevice());
+  const isMobile = touchMode === 'on' ? true : touchMode === 'off' ? false : autoMobile;
   const isMobileRef = useRef(isMobile);
   isMobileRef.current = isMobile;
   const [mobilePlaying, setMobilePlaying] = useState(false);
@@ -161,8 +172,8 @@ export default function App() {
   // Runtime refinement: a real touch enables mobile mode; a real mouse move (not synthesized from touch) disables it.
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has('mobile')) return;
-    const onTouch = () => setIsMobile(true);
-    const onPointer = (e: PointerEvent) => { if (e.pointerType === 'mouse' && e.isPrimary) setIsMobile(false); };
+    const onTouch = () => setAutoMobile(true);
+    const onPointer = (e: PointerEvent) => { if (e.pointerType === 'mouse' && e.isPrimary) setAutoMobile(false); };
     window.addEventListener('touchstart', onTouch, { passive: true, once: true });
     window.addEventListener('pointermove', onPointer, { passive: true, once: true });
     return () => { window.removeEventListener('touchstart', onTouch); window.removeEventListener('pointermove', onPointer); };
@@ -178,7 +189,7 @@ export default function App() {
   }, [fov]);
 
   // Persist settings whenever they change (debounced inside saveSettings)
-  useEffect(() => { saveSettings({ mouseSens, fov, masterVol, preset: currentPreset, botDifficulty }); }, [mouseSens, fov, masterVol, currentPreset, botDifficulty]);
+  useEffect(() => { saveSettings({ mouseSens, fov, masterVol, preset: currentPreset, botDifficulty, cameraShake, showDamageNumbers, touchMode }); }, [mouseSens, fov, masterVol, currentPreset, botDifficulty, cameraShake, showDamageNumbers, touchMode]);
 
   // Master Engine Object Reference
   const engineRef = useRef<{
@@ -322,6 +333,7 @@ export default function App() {
       setMobilePlaying(true);
       engineRef.current?.audioEngine.init();
       engineRef.current?.audioEngine.resume();
+      engineRef.current?.audioEngine.startAmbience();
       return;
     }
     if (!canvas || document.pointerLockElement === canvas) return;
@@ -331,6 +343,7 @@ export default function App() {
       if (p && typeof p.catch === 'function') p.catch(() => {});
       engineRef.current?.audioEngine.init();
       engineRef.current?.audioEngine.resume();
+      engineRef.current?.audioEngine.startAmbience();
     } catch {}
   }, []);
 
@@ -594,6 +607,7 @@ export default function App() {
 
     // 10. Insanely Smart Bot Simulation Engine (idle until a deployment is selected)
     const botSim = new BotSimulation(botDifficultyRef.current);
+    botSim.onBotFootstep = (_bot, pos) => audioEngine.playFootstep(pos);
     botSim.enabled = false;
 
     // 11. Overloaded GPU Particle Buffer (Volumetric desert sand & dust motes)
@@ -732,6 +746,12 @@ export default function App() {
       // Stats UI at 4 Hz — the HUD doesn't need a React re-render every frame for a counter
       if (time - lastStatsPush > 250) {
         lastStatsPush = time;
+        // Adaptive music tension: recent damage taken/dealt and enemies in sight drive the drone layer
+        const sinceDmg = Date.now() - lastDamageTimeRef.current;
+        const sinceShot = performance.now() - lastShotTimeRef.current;
+        const engaged = engine.botSim.bots.some(b => b.state.health > 0 && b.hasTargetAcquired);
+        const tension = Math.max(sinceDmg < 6000 ? 1 - sinceDmg / 6000 : 0, sinceShot < 4000 ? 0.6 * (1 - sinceShot / 4000) : 0, engaged ? 0.7 : 0);
+        engine.audioEngine.setCombatIntensity(tension);
         setFps(curFps);
         setFrameTimeMs(curDelta);
       }
@@ -896,7 +916,7 @@ export default function App() {
       // Procedural camera shake (explosions, taking damage) — decays exponentially, never accumulates past 1
       engine.shakeAmp = Math.max(0, engine.shakeAmp - dt * 2.2);
       engine.shakeTime += dt;
-      const shk = engine.shakeAmp * engine.shakeAmp * 0.035;
+      const shk = engine.shakeAmp * engine.shakeAmp * 0.035 * cameraShakeRef.current;
       const shakeX = shk * Math.sin(engine.shakeTime * 61.0) * Math.cos(engine.shakeTime * 17.3);
       const shakeY = shk * Math.sin(engine.shakeTime * 47.0 + 1.7);
       const shakeZ = shk * 0.5 * Math.sin(engine.shakeTime * 31.0 + 0.6);
@@ -988,7 +1008,8 @@ export default function App() {
               triggerPlayerDeath(bot.state.name, bot.state.currentWeapon);
             }
           }
-        }
+        },
+        [nextState.velocity[0], nextState.velocity[1], nextState.velocity[2]]
       );
 
       // 16.5 Out-of-Combat Field Medic Recovery (Regenerate up to 75 HP if not damaged for 4s)
@@ -1250,6 +1271,9 @@ export default function App() {
 
     const fireResult = engine.weaponSystem.fire();
     if (!fireResult) return;
+    lastShotTimeRef.current = performance.now();
+    matchStatsRef.current.shots++;
+    let registeredHitThisShot = false;
 
     const { def, pellets } = fireResult;
 
@@ -1353,6 +1377,9 @@ export default function App() {
 
         hitBot.state.health = Math.max(0, hitBot.state.health - finalDmg);
         engine.botSim.applyStagger(hitBot.state.id); // Stagger & flinch bot on hit!
+        if (!registeredHitThisShot) { registeredHitThisShot = true; matchStatsRef.current.hits++; }
+        if (isHeadshot) matchStatsRef.current.headshots++;
+        matchStatsRef.current.damage += finalDmg;
 
         setHitmarker(isHeadshot ? 'headshot' : 'body');
         setTimeout(() => setHitmarker(null), 120);
@@ -1364,7 +1391,7 @@ export default function App() {
         emitGpuParticles(hitBot.state.position, [0, 1, 0], isHeadshot ? 35 : 18, 2);
 
         const dmgId = Math.random().toString(36);
-        setFloatingDamages(prev => [
+        if (showDamageNumbersRef.current) setFloatingDamages(prev => [
           ...prev,
           {
             id: dmgId,
@@ -1385,11 +1412,13 @@ export default function App() {
           setPlayerKills(prev => { playerKillsRef.current = prev + 1; return prev + 1; });
 
           // Killstreak & Rival Coin Rewards
-          setKillStreak(prev => prev + 1);
+          setKillStreak(prev => { matchStatsRef.current.bestStreak = Math.max(matchStatsRef.current.bestStreak, prev + 1); return prev + 1; });
           handleAwardCoins(isHeadshot ? 100 : 50, isHeadshot ? 'Headshot Kill' : 'Enemy Eliminated');
 
           // Match Victory Check (10 Kills)
           if (playerKills + 1 >= 10 && !roundWinner) {
+            const ms = matchStatsRef.current;
+            setMatchStats({ shots: ms.shots, hits: ms.hits, headshots: ms.headshots, damage: ms.damage, bestStreak: ms.bestStreak, durationSec: Math.round((Date.now() - ms.startTime) / 1000) });
             setRoundWinner('VICTORY');
             handleAwardCoins(250, 'MATCH WINNER BONUS');
             awardXp(500, 'MATCH VICTORY');
@@ -1844,12 +1873,28 @@ export default function App() {
               <div className="text-sm font-black text-white">+250 RIVAL COINS &bull; +500 XP</div>
               <div className="text-[11px] text-zinc-400 mt-1">Kills: {playerKills} | Deaths: {playerDeaths} | Spree: {killStreak}</div>
             </div>
+            <div className="grid grid-cols-3 gap-2 mb-6 text-left">
+              {[
+                ['ACCURACY', matchStats.shots > 0 ? `${Math.round((matchStats.hits / matchStats.shots) * 100)}%` : '—'],
+                ['HEADSHOT %', matchStats.hits > 0 ? `${Math.round((matchStats.headshots / matchStats.hits) * 100)}%` : '—'],
+                ['K/D', `${(playerKills / Math.max(1, playerDeaths)).toFixed(2)}`],
+                ['DAMAGE', matchStats.damage.toLocaleString()],
+                ['BEST STREAK', `${matchStats.bestStreak}`],
+                ['TIME', `${Math.floor(matchStats.durationSec / 60)}:${String(matchStats.durationSec % 60).padStart(2, '0')}`],
+              ].map(([k, v]) => (
+                <div key={k} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                  <div className="text-[9px] tracking-widest text-zinc-500">{k}</div>
+                  <div className="text-sm font-black text-white">{v}</div>
+                </div>
+              ))}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
                   setRoundWinner(null);
                   setPlayerKills(0);
                   setKillStreak(0);
+                  matchStatsRef.current = { shots: 0, hits: 0, headshots: 0, damage: 0, bestStreak: 0, startTime: Date.now() };
                   requestPointerLock();
                 }}
                 className="py-3 bg-amber-500 hover:bg-amber-400 text-black font-black text-sm rounded-xl transition shadow-[0_0_20px_#f59e0b] cursor-pointer"
@@ -1882,6 +1927,12 @@ export default function App() {
           engineRef.current?.audioEngine.setMasterVolume(vol);
         }}
         isWebGPU={isWebGPU}
+        cameraShake={cameraShake}
+        onCameraShakeChange={setCameraShake}
+        showDamageNumbers={showDamageNumbers}
+        onShowDamageNumbersChange={setShowDamageNumbers}
+        touchMode={touchMode}
+        onTouchModeChange={setTouchMode}
         botDifficulty={botDifficulty}
         onBotDifficultyChange={handleSetBotDifficulty}
       />

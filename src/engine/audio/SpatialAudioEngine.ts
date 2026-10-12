@@ -496,25 +496,77 @@ export class SpatialAudioEngine {
     });
   }
 
-  public playFootstep(): void {
+  /** Boot on sand/concrete. Pass a position for an enemy footstep (spatialised, slightly louder for readability). */
+  public playFootstep(pos?: [number, number, number]): void {
     if (!this.ctx) this.init();
     if (!this.ctx) return;
 
     const t = this.ctx.currentTime;
-    // Real combat boot thud on sand / concrete
+    const dest = pos ? this.getDestination(pos) : this.masterGain!;
     const osc = this.ctx.createOscillator();
     osc.type = 'triangle';
-    osc.frequency.setValueAtTime(95, t);
+    osc.frequency.setValueAtTime(pos ? 110 : 95, t);
     osc.frequency.exponentialRampToValueAtTime(25, t + 0.06);
-
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.22, t);
+    gain.gain.setValueAtTime(pos ? 0.55 : 0.22, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    osc.connect(gain); gain.connect(dest);
+    osc.start(t); osc.stop(t + 0.07);
+    // grit scuff
+    this.burst(dest, t, 0.05, 0.6, 'bandpass', pos ? 2200 : 1800, pos ? 0.22 : 0.1, 0.05, 1.5);
+  }
 
-    osc.connect(gain);
-    gain.connect(this.masterGain!);
-    osc.start(t);
-    osc.stop(t + 0.07);
+  // ---------------------------------------------------------------------------
+  // Ambient soundscape: looping wind bed + distant rumble, with a combat tension layer
+  // ---------------------------------------------------------------------------
+  private ambientNodes: { windGain: GainNode; tensionGain: GainNode; lfo: OscillatorNode } | null = null;
+  private tensionTarget = 0;
+
+  public startAmbience(): void {
+    if (!this.ctx) this.init();
+    if (!this.ctx || this.ambientNodes) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+
+    // Wind: long pink-noise loop through a slowly modulated band-pass
+    const windSrc = ctx.createBufferSource();
+    windSrc.buffer = this.createGunpowderBuffer(6.0, 0.08);
+    windSrc.loop = true;
+    const windFilter = ctx.createBiquadFilter();
+    windFilter.type = 'bandpass';
+    windFilter.frequency.setValueAtTime(420, t);
+    windFilter.Q.setValueAtTime(0.7, t);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.setValueAtTime(0.07, t);
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.setValueAtTime(220, t);
+    lfo.connect(lfoGain); lfoGain.connect(windFilter.frequency);
+    const windGain = ctx.createGain();
+    windGain.gain.setValueAtTime(0.0001, t);
+    windGain.gain.exponentialRampToValueAtTime(0.09, t + 3);
+    windSrc.connect(windFilter); windFilter.connect(windGain); windGain.connect(this.masterGain!);
+
+    // Tension layer: low detuned drone that fades in during combat
+    const droneA = ctx.createOscillator(); droneA.type = 'sawtooth'; droneA.frequency.setValueAtTime(55, t);
+    const droneB = ctx.createOscillator(); droneB.type = 'sawtooth'; droneB.frequency.setValueAtTime(55.6, t);
+    const droneFilter = ctx.createBiquadFilter(); droneFilter.type = 'lowpass'; droneFilter.frequency.setValueAtTime(160, t);
+    const tensionGain = ctx.createGain(); tensionGain.gain.setValueAtTime(0.0001, t);
+    droneA.connect(droneFilter); droneB.connect(droneFilter); droneFilter.connect(tensionGain); tensionGain.connect(this.masterGain!);
+
+    windSrc.start(t); lfo.start(t); droneA.start(t); droneB.start(t);
+    this.ambientNodes = { windGain, tensionGain, lfo };
+  }
+
+  /** 0 = calm, 1 = full combat. Smoothly ramps the tension layer. */
+  public setCombatIntensity(level: number): void {
+    if (!this.ctx || !this.ambientNodes) return;
+    const v = Math.max(0, Math.min(1, level));
+    if (Math.abs(v - this.tensionTarget) < 0.02) return;
+    const rising = v > this.tensionTarget;
+    this.tensionTarget = v;
+    const t = this.ctx.currentTime;
+    this.ambientNodes.tensionGain.gain.cancelScheduledValues(t);
+    this.ambientNodes.tensionGain.gain.setTargetAtTime(0.0001 + v * 0.06, t, rising ? 0.4 : 1.5);
   }
 
   public playExplosion(pos: [number, number, number]): void {

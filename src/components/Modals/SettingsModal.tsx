@@ -22,6 +22,12 @@ interface SettingsModalProps {
   isWebGPU: boolean;
   botDifficulty?: BotDifficulty;
   onBotDifficultyChange?: (diff: BotDifficulty) => void;
+  cameraShake?: number;
+  onCameraShakeChange?: (v: number) => void;
+  showDamageNumbers?: boolean;
+  onShowDamageNumbersChange?: (v: boolean) => void;
+  touchMode?: 'auto' | 'on' | 'off';
+  onTouchModeChange?: (m: 'auto' | 'on' | 'off') => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -37,6 +43,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onMasterVolChange,
   isWebGPU,
   botDifficulty = 'easy',
+  cameraShake = 1,
+  onCameraShakeChange,
+  showDamageNumbers = true,
+  onShowDamageNumbersChange,
+  touchMode = 'auto',
+  onTouchModeChange,
   onBotDifficultyChange
 }) => {
   if (!isOpen) return null;
@@ -194,6 +206,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onChange={(e) => onMasterVolChange(parseFloat(e.target.value))}
             className="w-full accent-cyan-400 cursor-pointer"
           />
+        </div>
+
+        {/* Gameplay feel & accessibility */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
+            <div className="flex justify-between items-center mb-2 text-xs">
+              <span className="text-zinc-300 font-bold">CAMERA SHAKE</span>
+              <span className="text-cyan-400 font-bold">{Math.round(cameraShake * 100)}%</span>
+            </div>
+            <input
+              type="range" min="0" max="1" step="0.05" value={cameraShake}
+              onChange={(e) => onCameraShakeChange?.(parseFloat(e.target.value))}
+              className="w-full accent-cyan-400 cursor-pointer"
+            />
+            <div className="text-[10px] text-zinc-500 mt-1">Hit & explosion shake. 0% for motion sensitivity.</div>
+          </div>
+
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
+            <div className="text-xs text-zinc-300 font-bold mb-2">DAMAGE NUMBERS</div>
+            <div className="grid grid-cols-2 gap-1">
+              {[true, false].map((v) => (
+                <button key={String(v)} onClick={() => onShowDamageNumbersChange?.(v)}
+                  className={`py-1.5 rounded-lg text-[11px] font-bold border transition ${showDamageNumbers === v ? 'bg-cyan-950/80 border-cyan-400 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+                  {v ? 'ON' : 'OFF'}
+                </button>
+              ))}
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-1">Floating hit values near the crosshair.</div>
+          </div>
+
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
+            <div className="text-xs text-zinc-300 font-bold mb-2">TOUCH CONTROLS</div>
+            <div className="grid grid-cols-3 gap-1">
+              {(['auto', 'on', 'off'] as const).map((m) => (
+                <button key={m} onClick={() => onTouchModeChange?.(m)}
+                  className={`py-1.5 rounded-lg text-[11px] font-bold border transition uppercase ${touchMode === m ? 'bg-cyan-950/80 border-cyan-400 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+                  {m}
+                </button>
+              ))}
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-1">Auto detects phones & tablets.</div>
+          </div>
         </div>
 
         <div className="flex justify-end">

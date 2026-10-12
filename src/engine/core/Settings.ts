@@ -18,6 +18,7 @@ export interface PlayerSettings {
   botDifficulty: BotDifficultySetting;
   showDamageNumbers: boolean;
   cameraShake: number; // 0..1 multiplier
+  touchMode: 'auto' | 'on' | 'off';
 }
 
 const STORAGE_KEY = 'vanguard.settings.v1';
@@ -32,6 +33,7 @@ export const DEFAULT_SETTINGS: PlayerSettings = {
   botDifficulty: 'easy',
   showDamageNumbers: true,
   cameraShake: 1.0,
+  touchMode: 'auto',
 };
 
 const PRESETS: GraphicsPreset[] = ['low', 'medium', 'high', 'ultra', 'overdrive'];
@@ -54,6 +56,7 @@ export function sanitizeSettings(raw: unknown): PlayerSettings {
     botDifficulty: DIFFS.includes(r.botDifficulty as BotDifficultySetting) ? (r.botDifficulty as BotDifficultySetting) : DEFAULT_SETTINGS.botDifficulty,
     showDamageNumbers: typeof r.showDamageNumbers === 'boolean' ? r.showDamageNumbers : DEFAULT_SETTINGS.showDamageNumbers,
     cameraShake: num(r.cameraShake, DEFAULT_SETTINGS.cameraShake, 0, 1),
+    touchMode: r.touchMode === 'on' || r.touchMode === 'off' ? r.touchMode : 'auto',
   };
 }
 
