@@ -63,6 +63,26 @@ const MILITARY_RANKS = [
   'GLOBAL ELITE'
 ];
 
+
+/**
+ * Keeps exactly N nearest point/spot lights visible. Score = distance minus light range, so a light
+ * whose falloff sphere contains the player always beats a brighter one far away. With N fixed per
+ * tier, three.js compiles a single shader variant and far lights (zero contribution) cost nothing.
+ */
+function applyLightBudget(engine: { camera: THREE.Camera; lightPool: { points: THREE.PointLight[]; spots: THREE.SpotLight[] }; lightBudget: { points: number; spots: number } }): void {
+  const camPos = new THREE.Vector3();
+  engine.camera.getWorldPosition(camPos);
+  const wp = new THREE.Vector3();
+  const rank = <L extends THREE.PointLight | THREE.SpotLight>(lights: L[], keep: number) => {
+    if (lights.length <= keep) { lights.forEach(l => { l.visible = true; }); return; }
+    const scored = lights.map(l => { l.getWorldPosition(wp); return { l, s: wp.distanceTo(camPos) - (l.distance || 0) }; });
+    scored.sort((a, b) => a.s - b.s);
+    scored.forEach((e, i) => { e.l.visible = i < keep; });
+  };
+  rank(engine.lightPool.points, engine.lightBudget.points);
+  rank(engine.lightPool.spots, engine.lightBudget.spots);
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastPointerLockExit = useRef<number>(0);
@@ -240,6 +260,11 @@ export default function App() {
     targetFov: number;
     touchMove: { x: number; y: number };
     adaptive: AdaptiveQuality;
+    /** All scene point/spot lights for distance-based activation (constant active count per tier). */
+    lightPool: { points: THREE.PointLight[]; spots: THREE.SpotLight[] };
+    lightBudget: { points: number; spots: number };
+    lastLightCullAt: number;
+    lastPixelRatioChangeAt: number;
     presetPixelRatio: number;
     appliedPixelRatio: number;
     touchLook: { dx: number; dy: number };
@@ -678,6 +703,14 @@ export default function App() {
     particlePoints.frustumCulled = false;
     scene.add(particlePoints);
 
+    // Collect every local light once. Per-frame activation keeps a fixed number visible per tier,
+    // so three.js compiles one shader variant and far-away lights (zero contribution) cost nothing.
+    const lightPool = { points: [] as THREE.PointLight[], spots: [] as THREE.SpotLight[] };
+    scene.traverse(o => {
+      if ((o as THREE.PointLight).isPointLight) lightPool.points.push(o as THREE.PointLight);
+      else if ((o as THREE.SpotLight).isSpotLight) lightPool.spots.push(o as THREE.SpotLight);
+    });
+
     engineRef.current = {
       scene,
       camera,
@@ -731,6 +764,10 @@ export default function App() {
       targetFov: fov,
       touchMove: { x: 0, y: 0 },
       adaptive: new AdaptiveQuality(performance.now(), HW.isMobile),
+      lightPool,
+      lightBudget: { points: 64, spots: 32 },
+      lastLightCullAt: 0,
+      lastPixelRatioChangeAt: 0,
       presetPixelRatio: renderer.getPixelRatio(),
       appliedPixelRatio: renderer.getPixelRatio(),
       touchLook: { dx: 0, dy: 0 },
@@ -781,7 +818,9 @@ export default function App() {
       {
         const step = engine.adaptive.update(time, rawDt * 1000, presetSourceRef.current === 'auto', currentPresetRef.current);
         const wantPR = engine.presetPixelRatio * engine.adaptive.resolutionScale;
-        if (Math.abs(wantPR - engine.appliedPixelRatio) > 0.02) {
+        // Re-allocating every render target is itself a hitch: require a meaningful change and rate-limit it
+        if (Math.abs(wantPR - engine.appliedPixelRatio) > 0.05 && time - engine.lastPixelRatioChangeAt > 400) {
+          engine.lastPixelRatioChangeAt = time;
           engine.appliedPixelRatio = wantPR;
           renderer.setPixelRatio(wantPR);
           renderer.setSize(window.innerWidth, window.innerHeight);
@@ -809,6 +848,12 @@ export default function App() {
       }
       const wasmStatus = engine.wasmCore.getStatus();
       if (hudSync) setLatencyMs(wasmStatus.latencyMs);
+
+      // Nearest-N light activation (8 Hz)
+      if (time - engine.lastLightCullAt > 120) {
+        engine.lastLightCullAt = time;
+        applyLightBudget(engine);
+      }
 
       // Rotate hazard lights
       const tSec = time * 0.001;
@@ -1746,9 +1791,15 @@ export default function App() {
     sunLight.castShadow = tierIdx >= 1; // Low: no shadow pass at all
     renderer.shadowMap.enabled = tierIdx >= 1;
 
-    // Decorative prop layer is the biggest draw-call cost — drop it on Low, keep on everything else
+    // Decorative prop layer stays on every tier: it is pre-merged into a handful of draw calls,
+    // so hiding it on Low saved little and cost a lot of visual fidelity. Only its shadows are tiered.
     const envRoot = scene.getObjectByName('env-props');
-    if (envRoot) envRoot.visible = tierIdx >= 1;
+    if (envRoot) envRoot.visible = true;
+
+    // Fixed per-tier light budget -> constant shader variant, far lights (zero contribution) skipped
+    engine.lightBudget = { points: conf.activePointLights, spots: conf.activeSpotLights };
+    applyLightBudget(engine);
+    engine.lastLightCullAt = performance.now();
 
     // Remember the preset's native pixel ratio; the runtime governor scales from here
     engine.presetPixelRatio = renderer.getPixelRatio();
@@ -1786,6 +1837,15 @@ export default function App() {
 
     // Particle budget relative to the 250k "high" baseline
     engine.particleBudget = THREE.MathUtils.clamp(conf.maxComputeParticles / 250000, 0.1, 2.0);
+
+    // Pre-compile every material/light variant now instead of hitching on first sight of it in combat
+    try {
+      engine.weaponSystem.weaponMeshes.forEach(m => { m.userData.__wasVisible = m.visible; m.visible = true; });
+      renderer.compile(scene, engine.camera);
+    } catch (e) { console.warn('[Vanguard] shader precompile skipped', e); }
+    finally {
+      engine.weaponSystem.weaponMeshes.forEach(m => { m.visible = !!m.userData.__wasVisible; });
+    }
     return conf;
   }, []);
 
