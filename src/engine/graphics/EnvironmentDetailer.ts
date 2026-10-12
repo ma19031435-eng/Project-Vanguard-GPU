@@ -150,6 +150,22 @@ export class EnvironmentDetailer {
     this.boxes.push({ minX: x - w / 2, minY: y, minZ: z - d / 2, maxX: x + w / 2, maxY: y + h, maxZ: z + d / 2 });
   }
 
+  /**
+   * Derives a collision box from the object's real world-space bounds so the hitbox always matches
+   * what the player sees, regardless of rotation. `shrink` trims the XZ footprint (rounded/organic
+   * shapes feel better slightly tight); `maxHeight` caps the box (e.g. ignore thin tops).
+   * Must be called before `add()`, which bakes the object into static batches.
+   */
+  private collideObject(obj: THREE.Object3D, shrink = 0, maxHeight = Infinity): void {
+    obj.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(obj, true);
+    if (b.isEmpty()) return;
+    const minX = b.min.x + shrink, maxX = b.max.x - shrink;
+    const minZ = b.min.z + shrink, maxZ = b.max.z - shrink;
+    if (maxX - minX < 0.05 || maxZ - minZ < 0.05) return;
+    this.boxes.push({ minX, minY: Math.max(0, b.min.y), minZ, maxX, maxY: Math.min(b.max.y, Math.max(0, b.min.y) + maxHeight), maxZ });
+  }
+
   private rbox(w: number, h: number, d: number, r = 0.04, seg = 3): RoundedBoxGeometry {
     return new RoundedBoxGeometry(w, h, d, seg, r);
   }
@@ -536,9 +552,8 @@ export class EnvironmentDetailer {
       const m = new THREE.Mesh(geo, this.rng() > 0.5 ? this.mat.concrete : this.mat.concreteDark);
       m.position.set(p.x, 0, p.z);
       m.rotation.y = p.rot;
+      this.collideObject(m, 0.03);
       this.add(m);
-      const alongX = Math.abs(Math.cos(p.rot)) > 0.7;
-      this.collide(p.x, 0, p.z, alongX ? 0.8 : 3, 0.95, alongX ? 3 : 0.8);
     });
   }
 
@@ -572,8 +587,8 @@ export class EnvironmentDetailer {
       g.add(crate);
       g.position.set(n.x, 0, n.z);
       g.rotation.y = n.facing;
+      this.collideObject(g, 0.06);
       this.add(g);
-      this.collide(n.x, 0, n.z, 3.4, 1.1, 1.0);
     });
   }
 
@@ -603,9 +618,9 @@ export class EnvironmentDetailer {
         if (tipped) { g.rotation.z = Math.PI / 2; g.position.y = 0.3; }
         g.position.x = x; g.position.z = z;
         g.rotation.y = this.rng() * Math.PI;
+        this.collideObject(g, 0.02);
         this.add(g);
       }
-      this.collide(cx, 0, cz, 2.4, 0.9, 2.4);
     });
   }
 
@@ -638,13 +653,16 @@ export class EnvironmentDetailer {
       pallet.rotation.y = this.rng() * 0.6;
       this.add(pallet);
       const stack = 1 + Math.floor(this.rng() * 3);
+      const stackGroup = new THREE.Group();
       for (let i = 0; i < stack; i++) {
         const c = new THREE.Mesh(this.rbox(0.9, 0.5, 0.6, 0.03), crateMat);
         c.position.set(x + (this.rng() - 0.5) * 0.15, 0.16 + 0.25 + i * 0.5, z + (this.rng() - 0.5) * 0.15);
         c.rotation.y = pallet.rotation.y + (this.rng() - 0.5) * 0.2;
-        this.add(c);
+        stackGroup.add(c);
       }
-      this.collide(x, 0, z, 1.3, 0.2 + stack * 0.5, 1.1);
+      stackGroup.add(pallet.clone());
+      this.collideObject(stackGroup, 0.02);
+      stackGroup.children.filter(c => (c as THREE.Mesh).isMesh).forEach(c => this.add(c));
     });
   }
 
@@ -660,7 +678,7 @@ export class EnvironmentDetailer {
         t.rotation.z = stacked ? 0 : this.rng() * Math.PI;
         this.add(t);
       }
-      this.collide(x, 0, z, 1.2, 1.1, 1.2);
+      this.collide(x, 0, z, 1.1, 1.02, 1.1);
     });
   }
 

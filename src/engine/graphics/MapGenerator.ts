@@ -396,6 +396,10 @@ export class MapGenerator {
         leg.position.set(c.x + sx * (w / 2 - 0.4), h / 2, c.z + sz * (d / 2 - 0.4));
         leg.castShadow = true;
         this.scene.add(leg);
+        this.worldCollisionBoxes.push({
+          minX: leg.position.x - 0.2, minY: 0, minZ: leg.position.z - 0.2,
+          maxX: leg.position.x + 0.2, maxY: h - 0.25, maxZ: leg.position.z + 0.2
+        });
       }
 
       // Approach ramp pointing toward arena center (walkable staircase collision)

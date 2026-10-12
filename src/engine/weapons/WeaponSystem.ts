@@ -327,54 +327,58 @@ export class WeaponSystem {
   }
 
   /**
-   * Helper to create blocky operator arms holding weapons (Roblox Rivals & Krunker style)
+   * Procedural operator arms. Hands are placed exactly on the weapon's grip anchors and the
+   * forearm / upper arm are solved back toward the shoulder (camera space), so every weapon is
+   * held naturally instead of sharing one fixed arm pose.
+   *
+   * @param groupPos   weapon group position in camera space (used to convert shoulders to weapon-local)
+   * @param grips      grip anchors in weapon-local space; omit `left` for one-handed holds
    */
-  private createOperatorArms(): { armLeft: THREE.Group; armRight: THREE.Group } {
-    const armGroupL = new THREE.Group();
-    const armGroupR = new THREE.Group();
+  private createOperatorArms(
+    groupPos: [number, number, number],
+    grips: { right: [number, number, number]; left?: [number, number, number] }
+  ): { armLeft: THREE.Group; armRight: THREE.Group } {
+    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x243242, roughness: 0.6, metalness: 0.1 });
+    const gloveMat = new THREE.MeshStandardMaterial({ color: 0x181a1f, roughness: 0.7, metalness: 0.2 });
 
-    // Vibrant sleeve fabric & glove material
-    const sleeveMat = new THREE.MeshStandardMaterial({
-      color: 0x243242, // Tactical CT Blue / Slate
-      roughness: 0.6,
-      metalness: 0.1
-    });
-    const gloveMat = new THREE.MeshStandardMaterial({
-      color: 0x181a1f, // Tactical black fingerless gloves
-      roughness: 0.7,
-      metalness: 0.2
-    });
-    const skinMat = new THREE.MeshStandardMaterial({
-      color: 0x9b6e4e, // Human skin tone
-      roughness: 0.7,
-      metalness: 0.05
-    });
+    // Shoulder sockets in camera space (just outside the frustum edge, below eye level)
+    const shoulderCam = { right: [0.21, -0.32, 0.18], left: [-0.21, -0.32, 0.18] } as const;
 
-    // Right Arm (Trigger hand)
-    const rightForearm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.35), sleeveMat);
-    rightForearm.position.set(0.08, -0.05, 0.18);
-    rightForearm.rotation.x = -0.35;
-    rightForearm.rotation.y = -0.2;
-    armGroupR.add(rightForearm);
+    const segment = (a: THREE.Vector3, b: THREE.Vector3, w: number, h: number, mat: THREE.Material): THREE.Mesh => {
+      const len = Math.max(0.02, a.distanceTo(b));
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, len), mat);
+      m.position.copy(a).add(b).multiplyScalar(0.5);
+      m.lookAt(b);
+      m.castShadow = false;
+      return m;
+    };
 
-    const rightHand = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.09), gloveMat);
-    rightHand.position.set(0.02, -0.05, 0.01);
-    armGroupR.add(rightHand);
+    const buildArm = (gripLocal: [number, number, number], side: 'right' | 'left', mirror: number): THREE.Group => {
+      const g = new THREE.Group();
+      const hand = new THREE.Vector3(...gripLocal);
+      const sc = shoulderCam[side];
+      const shoulder = new THREE.Vector3(sc[0] - groupPos[0], sc[1] - groupPos[1], sc[2] - groupPos[2]);
+      // Elbow: 42% of the way back to the shoulder, dropped and flared outward for a bent-arm look
+      const elbow = hand.clone().lerp(shoulder, 0.42);
+      elbow.y -= 0.07;
+      elbow.x += mirror * 0.05;
+      // Hand block sits on the grip, oriented along the forearm
+      const handMesh = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.07, 0.1), gloveMat);
+      handMesh.position.copy(hand);
+      handMesh.lookAt(elbow);
+      g.add(handMesh);
+      // Wrist cuff -> forearm -> upper arm
+      const wrist = hand.clone().lerp(elbow, 0.12);
+      g.add(segment(wrist, elbow, 0.085, 0.085, sleeveMat));
+      g.add(segment(elbow, shoulder, 0.1, 0.1, sleeveMat));
+      return g;
+    };
 
-    // Left Arm (Foregrip support hand)
-    const leftForearm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.42), sleeveMat);
-    leftForearm.position.set(-0.16, -0.12, 0.12);
-    leftForearm.rotation.x = -0.4;
-    leftForearm.rotation.y = 0.45;
-    armGroupL.add(leftForearm);
-
-    const leftHand = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.09), gloveMat);
-    leftHand.position.set(-0.02, -0.02, -0.22);
-    armGroupL.add(leftHand);
-
-    armGroupL.name = 'armLeft';
-    armGroupR.name = 'armRight';
-    return { armLeft: armGroupL, armRight: armGroupR };
+    const armRight = buildArm(grips.right, 'right', 1);
+    armRight.name = 'armRight';
+    const armLeft = grips.left ? buildArm(grips.left, 'left', -1) : new THREE.Group();
+    armLeft.name = 'armLeft';
+    return { armLeft, armRight };
   }
 
   /**
@@ -416,6 +420,10 @@ export class WeaponSystem {
     // Receiver
     const akReceiver = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.55), akSkinMat);
     akGroup.add(akReceiver);
+    const akGroupGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), darkSteelMat);
+    akGroupGrip.position.set(0, -0.1, 0.1);
+    akGroupGrip.rotation.x = -0.3;
+    akGroup.add(akGroupGrip);
 
     // Curved Banana Magazine
     const akMag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.13), darkSteelMat);
@@ -444,7 +452,7 @@ export class WeaponSystem {
     akGroup.add(akFrontSight);
 
     // Add Player Arms
-    const akArms = this.createOperatorArms();
+    const akArms = this.createOperatorArms([0.24, -0.22, -0.5], { right: [0.0, -0.11, 0.1], left: [0.0, -0.04, -0.4] });
     akGroup.add(akArms.armLeft);
     akGroup.add(akArms.armRight);
 
@@ -460,6 +468,10 @@ export class WeaponSystem {
 
     const awpStock = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.15, 0.8), awpSkinMat);
     awpGroup.add(awpStock);
+    const awpGroupGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), darkSteelMat);
+    awpGroupGrip.position.set(0, -0.09, 0.08);
+    awpGroupGrip.rotation.x = -0.3;
+    awpGroup.add(awpGroupGrip);
 
     const awpLongBarrel = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.95), darkSteelMat);
     awpLongBarrel.position.set(0, 0.04, -0.85);
@@ -491,7 +503,7 @@ export class WeaponSystem {
     awpMag.position.set(0, -0.12, -0.12);
     awpGroup.add(awpMag);
 
-    const awpArms = this.createOperatorArms();
+    const awpArms = this.createOperatorArms([0.25, -0.24, -0.52], { right: [0.0, -0.1, 0.08], left: [0.0, -0.03, -0.55] });
     awpGroup.add(awpArms.armLeft);
     awpGroup.add(awpArms.armRight);
 
@@ -507,6 +519,10 @@ export class WeaponSystem {
 
     const spasReceiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.55), spasSkinMat);
     spasGroup.add(spasReceiver);
+    const spasGroupGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), darkSteelMat);
+    spasGroupGrip.position.set(0, -0.09, 0.06);
+    spasGroupGrip.rotation.x = -0.3;
+    spasGroup.add(spasGroupGrip);
 
     const spasBarrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.65), darkSteelMat);
     spasBarrel.position.set(0, 0.035, -0.55);
@@ -522,7 +538,7 @@ export class WeaponSystem {
     spasPump.position.set(0, 0.005, -0.42);
     spasGroup.add(spasPump);
 
-    const spasArms = this.createOperatorArms();
+    const spasArms = this.createOperatorArms([0.24, -0.22, -0.5], { right: [0.0, -0.1, 0.06], left: [0.0, -0.05, -0.42] });
     spasGroup.add(spasArms.armLeft);
     spasGroup.add(spasArms.armRight);
 
@@ -555,7 +571,7 @@ export class WeaponSystem {
     deagleBarrel.position.set(0, 0.045, -0.35);
     deagleGroup.add(deagleBarrel);
 
-    const deagleArms = this.createOperatorArms();
+    const deagleArms = this.createOperatorArms([0.22, -0.2, -0.42], { right: [0.0, -0.12, -0.01], left: [-0.045, -0.14, -0.03] });
     deagleGroup.add(deagleArms.armLeft);
     deagleGroup.add(deagleArms.armRight);
 
@@ -589,7 +605,8 @@ export class WeaponSystem {
     hilt.position.set(0, 0.05, 0.06);
     katanaGroup.add(hilt);
 
-    const katanaArms = this.createOperatorArms();
+    const katanaArms = this.createOperatorArms([0.18, -0.2, -0.42], { right: [0.0, 0.05, 0.08], left: [0.0, 0.05, 0.17] });
+    katanaGroup.add(katanaArms.armLeft);
     katanaGroup.add(katanaArms.armRight);
 
     katanaGroup.position.set(0.18, -0.2, -0.42);
@@ -607,6 +624,13 @@ export class WeaponSystem {
     rpgTube.rotation.x = Math.PI / 2;
     rpgTube.position.set(0, 0.05, -0.3);
     rpgGroup.add(rpgTube);
+    const rpgGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), darkSteelMat);
+    rpgGrip.position.set(0, -0.06, -0.08);
+    rpgGrip.rotation.x = -0.3;
+    rpgGroup.add(rpgGrip);
+    const rpgForeGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.06), darkSteelMat);
+    rpgForeGrip.position.set(0, -0.06, -0.38);
+    rpgGroup.add(rpgForeGrip);
 
     // Wooden Heat Shield wrap
     const rpgWood = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.35, 16), woodMat);
@@ -637,7 +661,7 @@ export class WeaponSystem {
     rpgSight.position.set(-0.07, 0.12, -0.25);
     rpgGroup.add(rpgSight);
 
-    const rpgArms = this.createOperatorArms();
+    const rpgArms = this.createOperatorArms([0.24, -0.15, -0.38], { right: [0.0, -0.07, -0.08], left: [0.0, -0.07, -0.38] });
     rpgGroup.add(rpgArms.armLeft);
     rpgGroup.add(rpgArms.armRight);
 
@@ -655,6 +679,10 @@ export class WeaponSystem {
     // Receiver
     const smgReceiver = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.11, 0.38), smgSkinMat);
     smgGroup.add(smgReceiver);
+    const smgGroupGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), darkSteelMat);
+    smgGroupGrip.position.set(0, -0.1, 0.06);
+    smgGroupGrip.rotation.x = -0.3;
+    smgGroup.add(smgGroupGrip);
 
     // Extended Stick Magazine
     const smgMag = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.28, 0.06), darkSteelMat);
@@ -673,7 +701,7 @@ export class WeaponSystem {
     reflexSight.position.set(0, 0.085, -0.06);
     smgGroup.add(reflexSight);
 
-    const smgArms = this.createOperatorArms();
+    const smgArms = this.createOperatorArms([0.20, -0.14, -0.36], { right: [0.0, -0.11, 0.06], left: [0.0, -0.06, -0.2] });
     smgGroup.add(smgArms.armLeft);
     smgGroup.add(smgArms.armRight);
 
@@ -707,7 +735,7 @@ export class WeaponSystem {
     revGrip.rotation.x = -0.32;
     revGroup.add(revGrip);
 
-    const revArms = this.createOperatorArms();
+    const revArms = this.createOperatorArms([0.20, -0.14, -0.35], { right: [0.0, -0.12, 0.05], left: [-0.045, -0.14, 0.03] });
     revGroup.add(revArms.armLeft);
     revGroup.add(revArms.armRight);
 
@@ -725,6 +753,10 @@ export class WeaponSystem {
     // Crossbow Stock & Flight Rail
     const xbowRail = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.08, 0.65), xbowSkinMat);
     xbowGroup.add(xbowRail);
+    const xbowGroupGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.07), darkSteelMat);
+    xbowGroupGrip.position.set(0, -0.08, 0.02);
+    xbowGroupGrip.rotation.x = -0.3;
+    xbowGroup.add(xbowGroupGrip);
 
     // Horizontal Bow Limbs
     const bowLimbs = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.04, 0.04), darkSteelMat);
@@ -744,7 +776,7 @@ export class WeaponSystem {
     arrowTip.position.set(0, 0.05, -0.45);
     xbowGroup.add(arrowTip);
 
-    const xbowArms = this.createOperatorArms();
+    const xbowArms = this.createOperatorArms([0.22, -0.15, -0.38], { right: [0.0, -0.09, 0.02], left: [0.0, -0.05, -0.28] });
     xbowGroup.add(xbowArms.armLeft);
     xbowGroup.add(xbowArms.armRight);
 
