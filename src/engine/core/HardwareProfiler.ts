@@ -155,8 +155,17 @@ export class AdaptiveQuality {
   }
 
   /** Returns -1 (step preset down), +1 (step up) or 0. Also updates resolutionScale. */
+  /** Whether the governor may lower render resolution at all. */
+  public enabled = true;
+
   update(now: number, dtMs: number, autoPreset: boolean, currentPreset: GraphicsPreset): -1 | 0 | 1 {
     if (!Number.isFinite(dtMs) || dtMs <= 0) return 0;
+    if (!this.enabled) { this.resolutionScale = 1.0; return 0; }
+    // High-end tiers are chosen for image quality: never let them degrade into a blur.
+    // Manual picks are sacred too - the player asked for this resolution.
+    const tierFloor = presetIndex(currentPreset) >= 2 ? 0.85 : presetIndex(currentPreset) === 1 ? 0.7 : (this.targetFps < 60 ? 0.45 : 0.55);
+    const floor = autoPreset ? tierFloor : Math.max(tierFloor, 0.85);
+    if (this.resolutionScale < floor) this.resolutionScale = floor;
     this.emaFrameMs += (Math.min(dtMs, 100) - this.emaFrameMs) * 0.08;
     if (now < this.warmupUntil) return 0;
 
@@ -166,13 +175,13 @@ export class AdaptiveQuality {
     // Resolution scaling: react every 500 ms, small steps, hysteresis
     if (now - this.lastScaleAt > 500) {
       this.lastScaleAt = now;
-      if (ratio > 1.12) this.resolutionScale = Math.max(this.minScale, this.resolutionScale - 0.07);
+      if (ratio > 1.12) this.resolutionScale = Math.max(floor, this.resolutionScale - 0.07);
       else if (ratio < 0.8 && this.resolutionScale < this.maxScale) this.resolutionScale = Math.min(this.maxScale, this.resolutionScale + 0.04);
     }
 
     if (!autoPreset) return 0;
     // Preset stepping: only when resolution scaling alone can't hold the target
-    if (ratio > 1.25 && this.resolutionScale <= this.minScale + 0.01) this.slowAccum += dtMs; else this.slowAccum = Math.max(0, this.slowAccum - dtMs * 0.5);
+    if (ratio > 1.25 && this.resolutionScale <= floor + 0.01) this.slowAccum += dtMs; else this.slowAccum = Math.max(0, this.slowAccum - dtMs * 0.5);
     if (ratio < 0.55 && this.resolutionScale >= this.maxScale - 0.01) this.fastAccum += dtMs; else this.fastAccum = Math.max(0, this.fastAccum - dtMs * 0.5);
 
     if (now - this.lastStepAt < 8000) return 0;

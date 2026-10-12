@@ -30,6 +30,16 @@ interface SettingsModalProps {
   onTouchModeChange?: (m: 'auto' | 'on' | 'off') => void;
   presetSource?: 'auto' | 'manual';
   onAutoPreset?: () => void;
+  renderScale?: number;
+  onRenderScaleChange?: (v: number) => void;
+  dynamicResolution?: boolean;
+  onDynamicResolutionChange?: (v: boolean) => void;
+  sharpness?: number;
+  onSharpnessChange?: (v: number) => void;
+  postStyle?: 'competitive' | 'cinematic';
+  onPostStyleChange?: (v: 'competitive' | 'cinematic') => void;
+  rawInput?: boolean;
+  onRawInputChange?: (v: boolean) => void;
   hardware?: { preset: GraphicsPreset; score: number; gpu: string; cores: number; memoryGb: number | null; isMobile: boolean; reasons: string[] };
 }
 
@@ -56,7 +66,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   presetSource = 'manual',
   onAutoPreset,
   hardware,
+  renderScale = 1,
+  onRenderScaleChange,
+  dynamicResolution = true,
+  onDynamicResolutionChange,
+  sharpness = 0.35,
+  onSharpnessChange,
+  postStyle = 'competitive',
+  onPostStyleChange,
+  rawInput = true,
+  onRawInputChange,
 }) => {
+  const Toggle = ({ value, onChange, labels = ['ON', 'OFF'] }: { value: boolean; onChange?: (v: boolean) => void; labels?: [string, string] }) => (
+    <div className="grid grid-cols-2 gap-1">
+      {[true, false].map((v, i) => (
+        <button key={String(v)} onClick={() => onChange?.(v)}
+          className={`py-1.5 rounded-lg text-[11px] font-bold border transition ${value === v ? 'bg-cyan-950/80 border-cyan-400 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+          {labels[i]}
+        </button>
+      ))}
+    </div>
+  );
   React.useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.code === 'Escape') onClose(); };
@@ -250,6 +280,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onChange={(e) => onMasterVolChange(parseFloat(e.target.value))}
             className="w-full accent-cyan-400 cursor-pointer"
           />
+        </div>
+
+        {/* Competitive display & clarity */}
+        <div className="mb-2 text-xs font-bold text-zinc-300 flex items-center gap-2"><Target className="w-4 h-4 text-cyan-400" /> COMPETITIVE DISPLAY</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
+            <div className="flex justify-between items-center mb-2 text-xs">
+              <span className="text-zinc-300 font-bold">RENDER SCALE</span>
+              <span className="text-cyan-400 font-bold">{Math.round(renderScale * 100)}%</span>
+            </div>
+            <input type="range" min="0.5" max="2" step="0.05" value={renderScale}
+              onChange={(e) => onRenderScaleChange?.(parseFloat(e.target.value))}
+              className="w-full accent-cyan-400 cursor-pointer" />
+            <div className="text-[10px] text-zinc-500 mt-1">On top of the preset. 100% = preset native; above 100% supersamples.</div>
+          </div>
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
+            <div className="text-xs text-zinc-300 font-bold mb-2">DYNAMIC RESOLUTION</div>
+            <Toggle value={dynamicResolution} onChange={onDynamicResolutionChange} />
+            <div className="text-[10px] text-zinc-500 mt-1">Off = always native. On = scales down only to hold frame rate (never below 85% on High+).</div>
+          </div>
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
+            <div className="flex justify-between items-center mb-2 text-xs">
+              <span className="text-zinc-300 font-bold">SHARPENING</span>
+              <span className="text-cyan-400 font-bold">{Math.round(sharpness * 100)}%</span>
+            </div>
+            <input type="range" min="0" max="1" step="0.05" value={sharpness}
+              onChange={(e) => onSharpnessChange?.(parseFloat(e.target.value))}
+              className="w-full accent-cyan-400 cursor-pointer" />
+            <div className="text-[10px] text-zinc-500 mt-1">Contrast-adaptive sharpen after anti-aliasing. Restores edge detail without halos.</div>
+          </div>
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
+            <div className="text-xs text-zinc-300 font-bold mb-2">POST STYLE</div>
+            <Toggle value={postStyle === 'competitive'} onChange={(v) => onPostStyleChange?.(v ? 'competitive' : 'cinematic')} labels={['COMPETITIVE', 'CINEMATIC']} />
+            <div className="text-[10px] text-zinc-500 mt-1">Competitive removes chromatic aberration and film grain for maximum clarity.</div>
+          </div>
+          <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl sm:col-span-2">
+            <div className="text-xs text-zinc-300 font-bold mb-2">RAW MOUSE INPUT</div>
+            <Toggle value={rawInput} onChange={onRawInputChange} />
+            <div className="text-[10px] text-zinc-500 mt-1">Bypasses OS pointer acceleration and scaling (Chromium / Edge). Re-locks on next click.</div>
+          </div>
         </div>
 
         {/* Gameplay feel & accessibility */}

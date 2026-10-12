@@ -45,6 +45,7 @@ interface TacticalHUDProps {
   allPlayers: PlayerNetState[];
   fps: number;
   frameTimeMs: number;
+  renderResLabel?: string;
   latencyMs: number;
   activeParticles: number;
   damageIndicators?: { id: number; angle: number; time: number }[];
@@ -99,6 +100,7 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   playerYaw,
   allPlayers,
   fps,
+  renderResLabel,
   latencyMs,
   damageIndicators = [],
   preset,
@@ -291,6 +293,7 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
           <span>{allPlayers.length > 1 ? `${allPlayers[0]?.ping || 18} ms` : 'HOST'}</span>
           <span className="text-white/25">·</span>
           <span className="uppercase">{preset}{presetAuto ? " · auto" : ""}</span>
+          {renderResLabel && <><span className="text-white/25">·</span><span>{renderResLabel}</span></>}
           {!isWebGPU && <span className="text-amber-300/80">· WebGL</span>}
         </div>
         {killFeed.slice(-6).map((kf) => (

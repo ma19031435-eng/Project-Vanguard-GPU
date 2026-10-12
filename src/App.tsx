@@ -93,6 +93,16 @@ export default function App() {
   const [cameraShake, setCameraShake] = useState(SAVED.cameraShake);
   const cameraShakeRef = useRef(SAVED.cameraShake);
   cameraShakeRef.current = cameraShake;
+  const [renderScale, setRenderScale] = useState(SAVED.renderScale);
+  const renderScaleRef = useRef(SAVED.renderScale);
+  renderScaleRef.current = renderScale;
+  const [dynamicResolution, setDynamicResolution] = useState(SAVED.dynamicResolution);
+  const [sharpness, setSharpness] = useState(SAVED.sharpness);
+  const [postStyle, setPostStyle] = useState<'competitive' | 'cinematic'>(SAVED.postStyle);
+  const [rawInput, setRawInput] = useState(SAVED.rawInput);
+  const rawInputRef = useRef(SAVED.rawInput);
+  rawInputRef.current = rawInput;
+  const [renderResLabel, setRenderResLabel] = useState('');
   const [showDamageNumbers, setShowDamageNumbers] = useState(SAVED.showDamageNumbers);
   const showDamageNumbersRef = useRef(SAVED.showDamageNumbers);
   showDamageNumbersRef.current = showDamageNumbers;
@@ -217,7 +227,28 @@ export default function App() {
   }, [fov]);
 
   // Persist settings whenever they change (debounced inside saveSettings)
-  useEffect(() => { saveSettings({ mouseSens, fov, masterVol, preset: currentPreset, presetSource, botDifficulty, cameraShake, showDamageNumbers, touchMode }); }, [mouseSens, fov, masterVol, currentPreset, presetSource, botDifficulty, cameraShake, showDamageNumbers, touchMode]);
+  useEffect(() => { saveSettings({ mouseSens, fov, masterVol, preset: currentPreset, presetSource, botDifficulty, cameraShake, showDamageNumbers, touchMode, renderScale, dynamicResolution, sharpness, postStyle, rawInput }); }, [mouseSens, fov, masterVol, currentPreset, presetSource, botDifficulty, cameraShake, showDamageNumbers, touchMode, renderScale, dynamicResolution, sharpness, postStyle, rawInput]);
+
+  // Live display/clarity settings -> engine (no preset re-apply needed)
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.adaptive.enabled = dynamicResolution;
+    if (!dynamicResolution) engine.adaptive.resolutionScale = 1;
+    engine.pipeline.setPostStyle(postStyle);
+    engine.pipeline.setSharpness(sharpness, engine.adaptive.resolutionScale);
+    engine.sharpnessSetting = sharpness;
+  }, [dynamicResolution, sharpness, postStyle]);
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const base = GraphicsQualityManager.computePixelRatio(engine.qualityManager.getConfig()) * renderScale;
+    engine.presetPixelRatio = base;
+    engine.appliedPixelRatio = base;
+    engine.renderer.setPixelRatio(base);
+    engine.renderer.setSize(window.innerWidth, window.innerHeight);
+    engine.pipeline.setSize(window.innerWidth, window.innerHeight);
+  }, [renderScale]);
 
   // Master Engine Object Reference
   const engineRef = useRef<{
@@ -265,6 +296,7 @@ export default function App() {
     lightBudget: { points: number; spots: number };
     lastLightCullAt: number;
     lastPixelRatioChangeAt: number;
+    sharpnessSetting: number;
     presetPixelRatio: number;
     appliedPixelRatio: number;
     touchLook: { dx: number; dy: number };
@@ -375,8 +407,12 @@ export default function App() {
     if (!canvas || document.pointerLockElement === canvas) return;
     if (Date.now() - lastPointerLockExit.current < 1100) return;
     try {
-      const p = (canvas.requestPointerLock as any)();
-      if (p && typeof p.catch === 'function') p.catch(() => {});
+      // Raw mouse input (no OS acceleration / scaling) when supported; fall back silently otherwise
+      const req = canvas.requestPointerLock as unknown as (opts?: { unadjustedMovement: boolean }) => Promise<void> | void;
+      let p: Promise<void> | void;
+      try { p = rawInputRef.current ? req.call(canvas, { unadjustedMovement: true }) : req.call(canvas); }
+      catch { p = req.call(canvas); }
+      if (p && typeof p.catch === 'function') p.catch(() => { try { req.call(canvas); } catch { /* ignore */ } });
       engineRef.current?.audioEngine.init();
       engineRef.current?.audioEngine.resume();
       engineRef.current?.audioEngine.startAmbience();
@@ -768,6 +804,7 @@ export default function App() {
       lightBudget: { points: 64, spots: 32 },
       lastLightCullAt: 0,
       lastPixelRatioChangeAt: 0,
+      sharpnessSetting: SAVED.sharpness,
       presetPixelRatio: renderer.getPixelRatio(),
       appliedPixelRatio: renderer.getPixelRatio(),
       touchLook: { dx: 0, dy: 0 },
@@ -825,6 +862,7 @@ export default function App() {
           renderer.setPixelRatio(wantPR);
           renderer.setSize(window.innerWidth, window.innerHeight);
           engine.pipeline.setSize(window.innerWidth, window.innerHeight);
+          engine.pipeline.setSharpness(engine.sharpnessSetting, engine.adaptive.resolutionScale);
         }
         if (step !== 0) {
           const next = presetAt(presetIndex(currentPresetRef.current) + step);
@@ -845,6 +883,8 @@ export default function App() {
         engine.audioEngine.setCombatIntensity(tension);
         setFps(curFps);
         setFrameTimeMs(curDelta);
+        const sz = renderer.getDrawingBufferSize(new THREE.Vector2());
+        setRenderResLabel(`${sz.x}×${sz.y}${engine.adaptive.resolutionScale < 0.995 ? ` · ${Math.round(engine.adaptive.resolutionScale * 100)}%` : ''}`);
       }
       const wasmStatus = engine.wasmCore.getStatus();
       if (hudSync) setLatencyMs(wasmStatus.latencyMs);
@@ -1775,6 +1815,7 @@ export default function App() {
     const { renderer, sunLight, pipeline, scene } = engine;
 
     // Resolution scale -> composer must follow the renderer's pixel ratio
+    renderer.setPixelRatio(GraphicsQualityManager.computePixelRatio(conf) * renderScaleRef.current);
     renderer.setSize(window.innerWidth, window.innerHeight);
     pipeline.setSize(window.innerWidth, window.innerHeight);
 
@@ -1814,8 +1855,9 @@ export default function App() {
       bloom: tier >= 2,
       smaa: tier >= 1,
       cinematic: tier >= 1,
-      bloomStrength: tier >= 3 ? 0.24 : 0.18,
+      bloomStrength: tier >= 3 ? 0.22 : 0.16,
     });
+    pipeline.setSharpness(engine.sharpnessSetting, 1);
 
     // Image-based lighting & texture filtering
     scene.environmentIntensity = tier === 0 ? 0.3 : tier === 1 ? 0.4 : 0.5;
@@ -1980,6 +2022,7 @@ export default function App() {
         coins={coins}
         activeSkinName={SHOP_SKINS[activeSkin]?.name || 'Standard'}
         antiCheatStatus={antiCheatStatus}
+        renderResLabel={renderResLabel}
         antiCheatViolations={antiCheatViolations}
         botsEnabled={botsEnabled}
         onToggleBots={handleToggleBots}
@@ -2065,6 +2108,16 @@ export default function App() {
         cameraShake={cameraShake}
         onCameraShakeChange={setCameraShake}
         showDamageNumbers={showDamageNumbers}
+        renderScale={renderScale}
+        onRenderScaleChange={setRenderScale}
+        dynamicResolution={dynamicResolution}
+        onDynamicResolutionChange={setDynamicResolution}
+        sharpness={sharpness}
+        onSharpnessChange={setSharpness}
+        postStyle={postStyle}
+        onPostStyleChange={setPostStyle}
+        rawInput={rawInput}
+        onRawInputChange={setRawInput}
         onShowDamageNumbersChange={setShowDamageNumbers}
         touchMode={touchMode}
         onTouchModeChange={setTouchMode}

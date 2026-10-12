@@ -68,11 +68,55 @@ const CinematicShader = {
   `
 };
 
+/**
+ * Contrast-adaptive sharpening (CAS-style). Restores edge definition lost to SMAA and to any
+ * dynamic-resolution upscale without ringing: the sharpen weight is scaled by local contrast so
+ * flat areas and already-sharp edges are left alone.
+ */
+const SharpenShader = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    uTexel: { value: new THREE.Vector2(1 / 1920, 1 / 1080) },
+    uStrength: { value: 0.35 }
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform vec2 uTexel;
+    uniform float uStrength;
+    varying vec2 vUv;
+    void main() {
+      vec3 e = texture2D(tDiffuse, vUv).rgb;
+      vec3 a = texture2D(tDiffuse, vUv + vec2(-uTexel.x, 0.0)).rgb;
+      vec3 b = texture2D(tDiffuse, vUv + vec2( uTexel.x, 0.0)).rgb;
+      vec3 c = texture2D(tDiffuse, vUv + vec2(0.0, -uTexel.y)).rgb;
+      vec3 d = texture2D(tDiffuse, vUv + vec2(0.0,  uTexel.y)).rgb;
+      vec3 mn = min(e, min(min(a, b), min(c, d)));
+      vec3 mx = max(e, max(max(a, b), max(c, d)));
+      // CAS weight: more sharpening where the local range is small relative to headroom
+      vec3 rcpM = 1.0 / max(mx, vec3(1e-4));
+      vec3 amp = clamp(min(mn, 1.0 - mx) * rcpM, 0.0, 1.0);
+      amp = sqrt(amp);
+      float peak = mix(-0.125, -0.2, uStrength);
+      vec3 w = amp * peak;
+      vec3 col = (e + (a + b + c + d) * w) / (1.0 + 4.0 * w);
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    }
+  `
+};
+
+export type PostStyle = 'competitive' | 'cinematic';
+
 export class CinematicPipeline {
   public composer: EffectComposer;
   public bloom: UnrealBloomPass;
   public smaa: SMAAPass;
   public cinematic: ShaderPass;
+  public sharpen: ShaderPass;
+  private sharpness = 0.35;
   public sky: THREE.Mesh;
   public sunDirection = new THREE.Vector3();
 
@@ -160,6 +204,11 @@ export class CinematicPipeline {
 
     this.smaa = new SMAAPass();
     this.composer.addPass(this.smaa);
+
+    // Sharpen last: after AA so it restores edge definition instead of fighting it
+    this.sharpen = new ShaderPass(SharpenShader);
+    this.composer.addPass(this.sharpen);
+    this.setPostStyle('competitive');
   }
 
   public refreshEnvironment(): void {
@@ -181,10 +230,41 @@ export class CinematicPipeline {
     this.setSize(window.innerWidth, window.innerHeight);
   }
 
+  /**
+   * Competitive: zero chromatic aberration / grain (both smear pixels), light vignette, neutral grade.
+   * Cinematic: the full look. Clarity-affecting effects are never on by default.
+   */
+  public setPostStyle(style: PostStyle): void {
+    const u = this.cinematic.uniforms as Record<string, { value: number }>;
+    if (style === 'competitive') {
+      u.uAberration.value = 0.0;
+      u.uGrain.value = 0.0;
+      u.uVignette.value = 0.12;
+      u.uSaturation.value = 1.04;
+      u.uContrast.value = 1.05;
+    } else {
+      u.uAberration.value = 0.0006;
+      u.uGrain.value = 0.02;
+      u.uVignette.value = 0.3;
+      u.uSaturation.value = 1.08;
+      u.uContrast.value = 1.08;
+    }
+  }
+
+  /** 0 = off, 1 = maximum. Automatically boosted while dynamic resolution renders below native. */
+  public setSharpness(strength: number, resolutionScale = 1): void {
+    this.sharpness = THREE.MathUtils.clamp(strength, 0, 1);
+    const upscaleBoost = THREE.MathUtils.clamp((1 - resolutionScale) * 1.5, 0, 0.5);
+    const eff = THREE.MathUtils.clamp(this.sharpness + upscaleBoost, 0, 1);
+    this.sharpen.enabled = eff > 0.01;
+    (this.sharpen.uniforms.uStrength as { value: number }).value = eff;
+  }
+
   public setSize(w: number, h: number): void {
-    this.composer.setPixelRatio(this.renderer.getPixelRatio());
-    this.composer.setSize(w, h);
-    this.bloom.setSize(w, h);
+    const pr = this.renderer.getPixelRatio();
+    this.composer.setPixelRatio(pr);
+    this.composer.setSize(w, h); // propagates w*pr / h*pr to every pass, including bloom
+    (this.sharpen.uniforms.uTexel as { value: THREE.Vector2 }).value.set(1 / Math.max(1, w * pr), 1 / Math.max(1, h * pr));
   }
 
   public render(dt: number, time: number): void {

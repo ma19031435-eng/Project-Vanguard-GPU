@@ -21,6 +21,16 @@ export interface PlayerSettings {
   touchMode: 'auto' | 'on' | 'off';
   /** 'auto' = hardware profiler + runtime governor pick the preset; 'manual' = user choice is sacred. */
   presetSource: 'auto' | 'manual';
+  /** Manual render-scale multiplier on top of the preset (1 = preset native). */
+  renderScale: number;
+  /** Allow the runtime governor to lower resolution to hold frame rate. */
+  dynamicResolution: boolean;
+  /** Post-AA contrast-adaptive sharpening, 0..1. */
+  sharpness: number;
+  /** Competitive = no aberration/grain, light vignette. */
+  postStyle: 'competitive' | 'cinematic';
+  /** Raw (unaccelerated, unadjusted) mouse input when the browser supports it. */
+  rawInput: boolean;
 }
 
 const STORAGE_KEY = 'vanguard.settings.v1';
@@ -37,6 +47,11 @@ export const DEFAULT_SETTINGS: PlayerSettings = {
   cameraShake: 1.0,
   touchMode: 'auto',
   presetSource: 'auto',
+  renderScale: 1.0,
+  dynamicResolution: true,
+  sharpness: 0.35,
+  postStyle: 'competitive',
+  rawInput: true,
 };
 
 const PRESETS: GraphicsPreset[] = ['low', 'medium', 'high', 'ultra', 'overdrive'];
@@ -61,6 +76,11 @@ export function sanitizeSettings(raw: unknown): PlayerSettings {
     cameraShake: num(r.cameraShake, DEFAULT_SETTINGS.cameraShake, 0, 1),
     touchMode: r.touchMode === 'on' || r.touchMode === 'off' ? r.touchMode : 'auto',
     presetSource: r.presetSource === 'manual' ? 'manual' : 'auto',
+    renderScale: num(r.renderScale, 1.0, 0.5, 2.0),
+    dynamicResolution: typeof r.dynamicResolution === 'boolean' ? r.dynamicResolution : true,
+    sharpness: num(r.sharpness, 0.35, 0, 1),
+    postStyle: r.postStyle === 'cinematic' ? 'cinematic' : 'competitive',
+    rawInput: typeof r.rawInput === 'boolean' ? r.rawInput : true,
   };
 }
 
