@@ -64,6 +64,11 @@ export class BotSimulation {
   public enabled: boolean = true; // Togglable bot simulation
   /** Fired whenever a moving bot plants a foot — the game plays a spatialised footstep. */
   public onBotFootstep: ((bot: SmartBotEntity, pos: [number, number, number]) => void) | null = null;
+  /** Map spawn points (set by the game once the arena is built). Used for validated respawns. */
+  public spawnPoints: [number, number, number][] = [];
+  /** Seconds a bot stays down before it redeploys. */
+  public respawnDelay = 3.0;
+  private deadSince = new Map<string, number>();
 
   // CS2 Competitive Strategic Chokepoints
   private tacticalChokepoints: { pos: [number, number, number]; preAimDir: [number, number, number] }[] = [
@@ -269,6 +274,7 @@ export class BotSimulation {
     if (!this.enabled) return;
 
     const pPosVec = new THREE.Vector3(...playerPos);
+    this.tickRespawns(dt, pPosVec, worldBoxes);
     const pVel = new THREE.Vector3(...playerVelocity);
     const now = performance.now();
     const diff = this.difficulty;
@@ -583,6 +589,76 @@ export class BotSimulation {
   }
 
   // ---------------------------------------------------------------------------
+  // Respawn — owned by the simulation so a bot can never stay dead or get lost
+  // ---------------------------------------------------------------------------
+
+  private tickRespawns(dt: number, playerPos: THREE.Vector3, boxes: BoundingBox3D[]): void {
+    for (const bot of this.bots) {
+      const p = bot.state.position;
+      const lost = !Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2]) ||
+        Math.abs(p[0]) > 48 || Math.abs(p[2]) > 48 || p[1] < -2 || p[1] > 12;
+      if (bot.state.health > 0 && !lost) { this.deadSince.delete(bot.state.id); continue; }
+      if (lost && bot.state.health > 0) {
+        // Physics glitch — snap back to a valid spawn without going through death
+        this.respawnBot(bot.state.id, this.pickSpawn(playerPos, boxes));
+        continue;
+      }
+      const t = (this.deadSince.get(bot.state.id) ?? 0) + dt;
+      this.deadSince.set(bot.state.id, t);
+      if (t >= this.respawnDelay) {
+        this.deadSince.delete(bot.state.id);
+        this.respawnBot(bot.state.id, this.pickSpawn(playerPos, boxes));
+      }
+    }
+  }
+
+  /** True when a standing body at pos would intersect a world box (so it would be hidden inside geometry). */
+  private insideGeometry(pos: THREE.Vector3, boxes: BoundingBox3D[]): boolean {
+    const r = BotSimulation.BOT_RADIUS + 0.25;
+    for (const b of boxes) {
+      if (b.maxY < pos.y + 0.2 || b.minY > pos.y + 1.7) continue;
+      if (pos.x + r < b.minX || pos.x - r > b.maxX || pos.z + r < b.minZ || pos.z - r > b.maxZ) continue;
+      return true;
+    }
+    return false;
+  }
+
+  /** Pick a respawn point: outside all colliders, well away from the player, not stacked on another bot. */
+  public pickSpawn(playerPos: THREE.Vector3, boxes: BoundingBox3D[]): [number, number, number] {
+    const candidates: [number, number, number][] = [
+      ...this.spawnPoints,
+      ...this.tacticalChokepoints.filter(c => c.pos[1] < 1).map(c => c.pos),
+      [24, 0, 24], [-24, 0, 24], [24, 0, -24], [-24, 0, -24],
+    ];
+    for (let i = 0; i < 24; i++) {
+      candidates.push([(Math.random() - 0.5) * 70, 0, (Math.random() - 0.5) * 70]);
+    }
+    const tmp = new THREE.Vector3();
+    let best: [number, number, number] | null = null;
+    let bestScore = -Infinity;
+    for (const c of candidates) {
+      tmp.set(c[0], c[1], c[2]);
+      if (this.insideGeometry(tmp, boxes)) continue;
+      const dPlayer = Math.hypot(c[0] - playerPos.x, c[2] - playerPos.z);
+      if (dPlayer < 10) continue;
+      let dBot = Infinity;
+      for (const o of this.bots) {
+        if (o.state.health <= 0) continue;
+        dBot = Math.min(dBot, Math.hypot(c[0] - o.state.position[0], c[2] - o.state.position[2]));
+      }
+      if (dBot < 2.5) continue;
+      // Prefer medium range (bot re-enters the fight quickly) with a bit of randomness
+      const score = -Math.abs(dPlayer - 22) + Math.random() * 8;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    if (best) return [best[0], best[1], best[2]];
+    // Everything rejected (should not happen) — fall back to the farthest spawn point from the player
+    const far = this.spawnPoints.slice().sort((a, b) =>
+      Math.hypot(b[0] - playerPos.x, b[2] - playerPos.z) - Math.hypot(a[0] - playerPos.x, a[2] - playerPos.z))[0];
+    return far ? [far[0], far[1], far[2]] : [0, 0, 28];
+  }
+
+  // ---------------------------------------------------------------------------
   // Navigation helpers
   // ---------------------------------------------------------------------------
 
@@ -727,6 +803,9 @@ export class BotSimulation {
       b.flankGoal = null;
       b.nearestCoverPos = null;
       b.burstCount = 0;
+      b.currentVelocity.set(0, 0, 0);
+      b.staggerTimer = 0;
+      this.deadSince.delete(botId);
     }
   }
 }

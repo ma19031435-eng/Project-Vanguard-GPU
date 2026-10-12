@@ -747,6 +747,7 @@ export default function App() {
 
     // 10. Insanely Smart Bot Simulation Engine (idle until a deployment is selected)
     const botSim = new BotSimulation(botDifficultyRef.current);
+    botSim.spawnPoints = spawnPoints;
     botSim.onBotFootstep = (_bot, pos) => audioEngine.playFootstep(pos);
     botSim.enabled = false;
 
@@ -1638,17 +1639,7 @@ export default function App() {
             skel.isDead = true;
           }
 
-          setTimeout(() => {
-            const spawnPos: [number, number, number] = [
-              (Math.random() - 0.5) * 55,
-              0,
-              (Math.random() - 0.5) * 55
-            ];
-            engine.botSim.respawnBot(hitBot.state.id, spawnPos);
-            if (skel) {
-              skel.isDead = false;
-            }
-          }, 3000);
+          // Respawn is owned by BotSimulation (validated spawn, never inside geometry).
         }
       } else {
         const hitPoint = cam.position.clone().addScaledVector(finalDir, closestHitDist);

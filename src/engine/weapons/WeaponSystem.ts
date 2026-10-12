@@ -844,26 +844,61 @@ export class WeaponSystem {
     });
     this.activeSkinMaterials.push(bladeMat);
 
-    // Blade
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.08, 0.85), bladeMat);
-    blade.position.set(0, 0.12, -0.5);
-    blade.rotation.x = 0.1;
-    katanaGroup.add(blade);
+    const spineMat = new THREE.MeshStandardMaterial({ color: 0x1b2230, metalness: 0.85, roughness: 0.3 });
+    const wrapMat = new THREE.MeshStandardMaterial({ color: 0x0e1014, roughness: 0.9, metalness: 0.05 });
+    const menukiMat = new THREE.MeshStandardMaterial({ color: 0x9aa4b2, metalness: 0.9, roughness: 0.25 });
 
-    // Tsuba (Guard) & Hilt
-    const tsuba = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.02), darkSteelMat);
-    tsuba.position.set(0, 0.08, -0.08);
+    // Blade: three segments with a gentle sori (curve) so the tip sweeps up; glowing edge + dark spine on one axis
+    const segLen = 0.26;
+    for (let i = 0; i < 3; i++) {
+      const seg = new THREE.Group();
+      const curve = i * 0.055;
+      seg.position.set(0, i * 0.012 + i * i * 0.006, -0.03 - i * segLen);
+      seg.rotation.x = curve;
+      const spine = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.03, segLen + 0.01), spineMat);
+      spine.position.set(0, 0.005, -segLen / 2);
+      seg.add(spine);
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.022, segLen + 0.01), bladeMat);
+      edge.position.set(0, -0.016, -segLen / 2);
+      seg.add(edge);
+      katanaGroup.add(seg);
+    }
+    // Kissaki (tip) — tapered wedge
+    const kissaki = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.09, 4), bladeMat);
+    kissaki.rotation.x = -Math.PI / 2 + 0.11; kissaki.rotation.z = Math.PI / 4;
+    kissaki.position.set(0, 0.075, -0.855);
+    katanaGroup.add(kissaki);
+
+    // Tsuba (guard), habaki collar, wrapped tsuka with menuki and kashira cap
+    const tsuba = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.012, 8), darkSteelMat);
+    tsuba.rotation.x = Math.PI / 2;
+    tsuba.position.set(0, 0, 0);
     katanaGroup.add(tsuba);
+    const habaki = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.03), menukiMat);
+    habaki.position.set(0, 0, -0.02);
+    katanaGroup.add(habaki);
+    const tsuka = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.038, 0.27), wrapMat);
+    tsuka.position.set(0, 0, 0.14);
+    katanaGroup.add(tsuka);
+    for (let i = 0; i < 5; i++) {
+      const wrap = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.042, 0.012), spineMat);
+      wrap.position.set(0, 0, 0.03 + i * 0.05);
+      wrap.rotation.z = (i % 2 ? 1 : -1) * 0.5;
+      katanaGroup.add(wrap);
+    }
+    const kashira = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.042, 0.02), darkSteelMat);
+    kashira.position.set(0, 0, 0.285);
+    katanaGroup.add(kashira);
 
-    const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.28), darkSteelMat);
-    hilt.position.set(0, 0.05, 0.06);
-    katanaGroup.add(hilt);
-
-    const katanaArms = this.createOperatorArms([0.18, -0.2, -0.42], { right: [0.0, 0.05, 0.08], left: [0.0, 0.05, 0.17] });
+    // Two-hand grip: right hand up against the tsuba, left hand at the pommel
+    const katanaRest: [number, number, number] = [0.12, -0.22, -0.36];
+    const katanaArms = this.createOperatorArms(katanaRest, { right: [0.0, 0.0, 0.06], left: [0.0, 0.0, 0.22] });
     katanaGroup.add(katanaArms.armLeft);
     katanaGroup.add(katanaArms.armRight);
 
-    katanaGroup.position.set(0.18, -0.2, -0.42);
+    katanaGroup.position.set(katanaRest[0], katanaRest[1], katanaRest[2]);
+    // Chudan guard: tip raised, angled in toward centre screen, edge canted
+    katanaGroup.userData.baseRot = new THREE.Euler(0.42, 0.32, 0.28);
     katanaGroup.visible = false;
     this.viewmodelRoot.add(katanaGroup);
     this.weaponMeshes.set('melee', katanaGroup);
@@ -1332,7 +1367,7 @@ export class WeaponSystem {
 
     // Melee swing animation: speed depends on the weapon (knife snaps, sledge follows through)
     if (this.meleeSlashAnim > 0) {
-      const swingSpeed = feel.melee === 'stab' ? 9.0 : feel.melee === 'overhead' ? 2.6 : 4.5;
+      const swingSpeed = feel.melee === 'stab' ? 9.0 : feel.melee === 'overhead' ? 2.6 : 3.4;
       this.meleeSlashAnim = Math.max(0, this.meleeSlashAnim - dt * swingSpeed);
     }
 
@@ -1385,8 +1420,9 @@ export class WeaponSystem {
 
       // Rest position in front-right viewport (elevated so weapon is prominently visible)
       const isMeleeNow = isMeleeWeapon(this.currentWeapon);
-      const defaultRestX = isMeleeNow ? 0.18 : (this.currentWeapon === 'rpg' ? 0.22 : 0.20);
-      const defaultRestY = this.currentWeapon === 'rpg' ? -0.14 : (isMeleeNow ? -0.16 : -0.15);
+      const isKatana = this.currentWeapon === 'melee';
+      const defaultRestX = isKatana ? 0.12 : isMeleeNow ? 0.18 : (this.currentWeapon === 'rpg' ? 0.22 : 0.20);
+      const defaultRestY = this.currentWeapon === 'rpg' ? -0.14 : (isKatana ? -0.2 : isMeleeNow ? -0.16 : -0.15);
       const defaultRestZ = -0.36;
 
       const restPos = this.isADS
@@ -1406,8 +1442,18 @@ export class WeaponSystem {
         const wind = THREE.MathUtils.smoothstep(sw, 0.65, 1.0);          // early phase
         const slam = THREE.MathUtils.smoothstep(1 - sw, 0.35, 0.8);      // later phase
         meleeRX = 0.9 * wind - 1.5 * slam; meleeY = 0.12 * wind - 0.18 * slam; meleeZ = 0.1 * wind - 0.12 * slam; meleeRZ = -0.25 * slam;
-      } else if (feel.melee) {                      // katana: horizontal slash
-        meleeX = -0.2 * sw; meleeRY = -0.8 * sw; meleeRZ = 0.25 * arc;
+      } else if (feel.melee) {                      // katana: kesa-giri — wind up high right, diagonal cut to low left, recover
+        const p = 1 - sw;                                                  // 0 -> 1 over the swing
+        const wind = THREE.MathUtils.smoothstep(p, 0.0, 0.2);               // raise to upper right
+        const cut = THREE.MathUtils.smoothstep(p, 0.2, 0.5);                // the cut itself (fast)
+        const recover = THREE.MathUtils.smoothstep(p, 0.5, 1.0);            // settle back to guard
+        const k = (hi: number, lo: number) => (hi * wind + (lo - hi) * cut) * (1 - recover);
+        meleeX  = k( 0.14, -0.30);
+        meleeY  = k( 0.10, -0.14);
+        meleeZ  = k( 0.06, -0.10);
+        meleeRX = k( 0.55, -0.95);
+        meleeRY = k(-0.70,  0.95);
+        meleeRZ = k( 0.15, -0.75);
       }
 
       const base = (targetMesh.userData.baseRot as THREE.Euler | undefined);
