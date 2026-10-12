@@ -29,11 +29,14 @@ export interface WeaponDef {
   isExplosive?: boolean;
   /** Fully automatic: holding the trigger keeps firing at fireRateRpm. */
   isAutomatic?: boolean;
+  /** ADS field-of-view multiplier (1 = no zoom). */
+  adsZoom?: number;
 }
 
 export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   rifle: {
     id: 'rifle',
+    adsZoom: 0.8,
     isAutomatic: true,
     name: 'AK-47 Tactical',
     category: 'Assault Rifle (1-Tap Lethal)',
@@ -53,6 +56,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   railgun: {
     id: 'railgun',
+    adsZoom: 0.4,
     name: 'AWP Heavy Sniper',
     category: 'Precision Bolt-Action (1-Shot Body)',
     damage: 115,
@@ -71,6 +75,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   smg: {
     id: 'smg',
+    adsZoom: 0.86,
     isAutomatic: true,
     name: 'SMG (Run N Gun)',
     category: 'Submachine Gun (Rapid Spray)',
@@ -90,6 +95,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   shotgun: {
     id: 'shotgun',
+    adsZoom: 0.9,
     name: 'SPAS-12 Pump Shotgun',
     category: 'Heavy Close-Quarters Buckshot',
     damage: 18,
@@ -108,6 +114,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   pistol: {
     id: 'pistol',
+    adsZoom: 0.8,
     name: 'Desert Eagle .50',
     category: 'Heavy Tactical Handgun',
     damage: 54,
@@ -126,6 +133,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   revolver: {
     id: 'revolver',
+    adsZoom: 0.72,
     name: 'Six-Shooter Revolver',
     category: 'Precision Marksman Cannon',
     damage: 66,
@@ -144,6 +152,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   crossbow: {
     id: 'crossbow',
+    adsZoom: 0.62,
     name: 'Bowman Crossbow',
     category: 'Silent Precision Projectile',
     damage: 120,
@@ -162,6 +171,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   melee: {
     id: 'melee',
+    adsZoom: 1.0,
     isAutomatic: true,
     name: 'Cyber Katana',
     category: 'Tactical Melee Edge',
@@ -182,6 +192,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   rpg: {
     id: 'rpg',
+    adsZoom: 0.85,
     name: 'RPG-7 Warhead',
     category: 'High-Explosive Rocket Launcher',
     damage: 135,
@@ -239,6 +250,15 @@ export class WeaponSystem {
   private firedReloadStages: Set<string> = new Set();
   private reloadPartCache: Map<THREE.Group, Map<string, { obj: THREE.Object3D; pos: THREE.Vector3; rot: THREE.Euler; scale: THREE.Vector3 }[]>> = new Map();
   private reloadPose = { pos: new THREE.Vector3(), rot: new THREE.Vector3() };
+  /** Weapon inspect flourish (F). 0 = idle, counts 0..1 over ~2.4 s. */
+  private inspectT: number = -1;
+
+  public inspect(): void {
+    if (this.isReloading || this.isADS || this.inspectT >= 0 || this.equipTransition < 1) return;
+    this.inspectT = 0;
+  }
+
+  public cancelInspect(): void { this.inspectT = -1; }
   public isADS: boolean = false;
   private lastFireTime: number = 0;
   public spreadCurrent: number = 0.003;
@@ -744,6 +764,7 @@ export class WeaponSystem {
     this.reloadProgress = 0;
     this.shotSequence = 0;
     this.equipTransition = 0.0; // Trigger snappy equip lift
+    this.inspectT = -1;
   }
 
   public canFire(): boolean {
@@ -760,6 +781,7 @@ export class WeaponSystem {
 
     const def = WEAPON_DEFINITIONS[this.currentWeapon];
     this.lastFireTime = performance.now();
+    this.inspectT = -1;
     if (this.currentWeapon !== 'melee') {
       this.ammoInMag[this.currentWeapon]--;
     }
@@ -796,6 +818,7 @@ export class WeaponSystem {
 
     this.isReloading = true;
     this.firedReloadStages.clear();
+    this.inspectT = -1;
     this.reloadProgress = 0;
     this.shotSequence = 0;
     return true;
@@ -829,6 +852,22 @@ export class WeaponSystem {
     if (this.isReloading) {
       const mesh = this.weaponMeshes.get(this.currentWeapon);
       if (mesh) this.applyReloadAnimation(mesh, Math.min(this.reloadProgress, 1));
+    } else if (this.inspectT >= 0) {
+      this.inspectT += dt / 2.4;
+      if (this.inspectT >= 1) {
+        this.inspectT = -1;
+      } else {
+        // Bring the weapon up and centre, roll it to show the left side, then the top, and settle back.
+        const t = this.inspectT;
+        const env = Math.sin(Math.min(t / 0.15, 1) * Math.PI * 0.5) * (t > 0.82 ? Math.cos(((t - 0.82) / 0.18) * Math.PI * 0.5) : 1);
+        const phase = THREE.MathUtils.clamp((t - 0.15) / 0.67, 0, 1);
+        this.reloadPose.pos.set(-0.08 * env, 0.05 * env, 0.08 * env);
+        this.reloadPose.rot.set(
+          0.25 * env * Math.sin(phase * Math.PI),
+          (-0.9 * Math.sin(phase * Math.PI) + 0.35 * Math.sin(phase * Math.PI * 2)) * env,
+          (0.75 * Math.sin(phase * Math.PI) ) * env
+        );
+      }
     }
 
     // Dynamic Accuracy Spread

@@ -22,6 +22,9 @@ import { ShopSystem, WeaponSkinId, CharacterHatId, SHOP_SKINS } from './engine/s
 import { SentinelAntiCheat } from './engine/anticheat/SentinelAntiCheat.ts';
 import { MainLobby, PauseOverlay, SessionMode } from './components/Lobby/MainLobby.tsx';
 import { Trophy } from 'lucide-react';
+import { loadSettings, saveSettings } from './engine/core/Settings.ts';
+
+const SAVED = loadSettings();
 
 const ARENA_PLAYLIST_COUNT = 6;
 
@@ -76,7 +79,7 @@ export default function App() {
   const [isPointerLocked, setIsPointerLocked] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lobbyOpen, setLobbyOpen] = useState(false);
-  const [botDifficulty, setBotDifficulty] = useState<BotDifficulty>('easy');
+  const [botDifficulty, setBotDifficulty] = useState<BotDifficulty>(SAVED.botDifficulty);
   const botDifficultyRef = useRef<BotDifficulty>('easy');
   botDifficultyRef.current = botDifficulty;
 
@@ -126,12 +129,25 @@ export default function App() {
   const [frameTimeMs, setFrameTimeMs] = useState(16.6);
   const [latencyMs, setLatencyMs] = useState(0.04);
   const [activeParticles, setActiveParticles] = useState(150000);
-  const [currentPreset, setCurrentPreset] = useState<GraphicsPreset>('ultra');
+  const [currentPreset, setCurrentPreset] = useState<GraphicsPreset>(SAVED.preset);
   const [isWebGPU, setIsWebGPU] = useState(false);
   const webGPUCapable = typeof navigator !== 'undefined' && 'gpu' in navigator;
-  const [mouseSens, setMouseSens] = useState(1.0);
-  const [fov, setFov] = useState(85);
-  const [masterVol, setMasterVol] = useState(0.85);
+  const [mouseSens, setMouseSens] = useState(SAVED.mouseSens);
+  const [fov, setFov] = useState(SAVED.fov);
+  const [masterVol, setMasterVol] = useState(SAVED.masterVol);
+  const [contextLost, setContextLost] = useState(false);
+  const [damageIndicators, setDamageIndicators] = useState<{ id: number; angle: number; time: number }[]>([]);
+  const damageIdRef = useRef(0);
+
+  // Live-apply FOV slider (keeps ADS zoom ratio if currently aiming)
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.targetFov = engine.weaponSystem.isADS ? fov * (WEAPON_DEFINITIONS[engine.weaponSystem.currentWeapon].adsZoom ?? 0.8) : fov;
+  }, [fov]);
+
+  // Persist settings whenever they change (debounced inside saveSettings)
+  useEffect(() => { saveSettings({ mouseSens, fov, masterVol, preset: currentPreset, botDifficulty }); }, [mouseSens, fov, masterVol, currentPreset, botDifficulty]);
 
   // Master Engine Object Reference
   const engineRef = useRef<{
@@ -170,6 +186,9 @@ export default function App() {
     pitch: number;
     yaw: number;
     punchPitch: number;
+    shakeAmp: number;
+    targetFov: number;
+    shakeTime: number;
     landingPunchY: number;
     footstepSoundTimer: number;
     keysDown: Set<string>;
@@ -272,6 +291,7 @@ export default function App() {
       const p = (canvas.requestPointerLock as any)();
       if (p && typeof p.catch === 'function') p.catch(() => {});
       engineRef.current?.audioEngine.init();
+      engineRef.current?.audioEngine.resume();
     } catch {}
   }, []);
 
@@ -422,6 +442,10 @@ export default function App() {
       logarithmicDepthBuffer: false
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    const onContextLost = (e: Event) => { e.preventDefault(); setContextLost(true); console.warn('[Vanguard] WebGL context lost'); };
+    const onContextRestored = () => { setContextLost(false); console.info('[Vanguard] WebGL context restored'); };
+    canvas.addEventListener('webglcontextlost', onContextLost, false);
+    canvas.addEventListener('webglcontextrestored', onContextRestored, false);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.95; // Sky dome is HDR; keep exposure conservative
     renderer.shadowMap.enabled = true;
@@ -479,6 +503,7 @@ export default function App() {
     // 8. Procedural Weapon System
     const weaponSystem = new WeaponSystem(camera);
     weaponSystem.onReloadStage = (weapon, stage) => audioEngine.playReloadStage(weapon, stage);
+    audioEngine.setMasterVolume(SAVED.masterVol);
 
     // 9. P2P Host-Authoritative Netcode Engine
     const p2pNet = new P2PNetworkEngine();
@@ -620,6 +645,9 @@ export default function App() {
       pitch: 0,
       yaw: 0,
       punchPitch: 0,
+      shakeAmp: 0,
+      targetFov: fov,
+      shakeTime: 0,
       landingPunchY: 0,
       footstepSoundTimer: 0,
       keysDown: new Set(),
@@ -647,18 +675,25 @@ export default function App() {
     // 12. Main 60Hz Render & Simulation Loop
     let animationFrameId: number;
     let lastTime = performance.now();
+    let lastStatsPush = 0;
 
     const renderLoop = (time: number) => {
       animationFrameId = requestAnimationFrame(renderLoop);
-      const dt = Math.min((time - lastTime) / 1000, 0.08);
+      // Clamp dt: tab switches / debugger pauses must not teleport physics (and NaN can never enter the sim)
+      const rawDt = (time - lastTime) / 1000;
+      const dt = Number.isFinite(rawDt) ? Math.min(Math.max(rawDt, 0), 0.08) : 1 / 60;
       lastTime = time;
 
       const engine = engineRef.current;
       if (!engine) return;
 
       const { fps: curFps, frameTimeMs: curDelta } = engine.qualityManager.recordFrame(time);
-      setFps(curFps);
-      setFrameTimeMs(curDelta);
+      // Stats UI at 4 Hz — the HUD doesn't need a React re-render every frame for a counter
+      if (time - lastStatsPush > 250) {
+        lastStatsPush = time;
+        setFps(curFps);
+        setFrameTimeMs(curDelta);
+      }
       const wasmStatus = engine.wasmCore.getStatus();
       setLatencyMs(wasmStatus.latencyMs);
 
@@ -801,11 +836,26 @@ export default function App() {
       // 14. Heavy CS2 Recoil Recovery (Pull-down spray compensation)
       engine.punchPitch = THREE.MathUtils.lerp(engine.punchPitch, 0, dt * 10);
 
+      // Procedural camera shake (explosions, taking damage) — decays exponentially, never accumulates past 1
+      engine.shakeAmp = Math.max(0, engine.shakeAmp - dt * 2.2);
+      engine.shakeTime += dt;
+      const shk = engine.shakeAmp * engine.shakeAmp * 0.035;
+      const shakeX = shk * Math.sin(engine.shakeTime * 61.0) * Math.cos(engine.shakeTime * 17.3);
+      const shakeY = shk * Math.sin(engine.shakeTime * 47.0 + 1.7);
+      const shakeZ = shk * 0.5 * Math.sin(engine.shakeTime * 31.0 + 0.6);
+
       camera.rotation.order = 'YXZ';
       if (!engine.isDead) {
-        camera.rotation.set(engine.pitch + engine.punchPitch, engine.yaw, 0, 'YXZ');
+        camera.rotation.set(engine.pitch + engine.punchPitch + shakeX, engine.yaw + shakeY, shakeZ, 'YXZ');
       } else {
         camera.rotation.set(0.25, engine.yaw, 0.45, 'YXZ');
+      }
+
+      // Smooth ADS zoom (per-weapon) — exponential ease, frame-rate independent
+      {
+        const k = 1 - Math.exp(-dt * 14);
+        const nextFov = THREE.MathUtils.lerp(camera.fov, engine.targetFov, k);
+        if (Math.abs(nextFov - camera.fov) > 0.01) { camera.fov = nextFov; camera.updateProjectionMatrix(); }
       }
 
       // 15. Update Weapons & Viewmodel
@@ -866,6 +916,13 @@ export default function App() {
             setPlayerArmor(engine.playerArmor);
             setPlayerHp(engine.playerHp);
             lastDamageTimeRef.current = Date.now();
+
+            // Directional damage indicator: angle of the attacker relative to the view yaw (0 = ahead, clockwise)
+            const toAtk = Math.atan2(rayOrigin[0] - camera.position.x, rayOrigin[2] - camera.position.z);
+            const rel = -(toAtk - (engine.yaw + Math.PI));
+            const id = ++damageIdRef.current;
+            setDamageIndicators(prev => [...prev.slice(-7), { id, angle: rel, time: Date.now() }]);
+            engine.shakeAmp = Math.min(1, engine.shakeAmp + (isHead ? 0.45 : 0.28));
 
             engine.audioEngine.playHitmarker(isHead, false);
             engine.punchPitch += 0.02; // Gentle tactical aim punch
@@ -966,6 +1023,8 @@ export default function App() {
       window.clearInterval(gpuStatusTimer);
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
+      canvas.removeEventListener('webglcontextlost', onContextLost);
+      canvas.removeEventListener('webglcontextrestored', onContextRestored);
       pipeline.dispose();
       renderer.dispose();
       p2pNet.destroy();
@@ -1220,6 +1279,7 @@ export default function App() {
           const shattered = engine.mapGen.damageDestructible(id, def.damage, hitPoint);
           if (shattered) {
             engine.audioEngine.playExplosion([hitPoint.x, hitPoint.y, hitPoint.z]);
+            engine.shakeAmp = Math.min(1, engine.shakeAmp + THREE.MathUtils.clamp(1 - hitPoint.distanceTo(engine.camera.position) / 22, 0, 1) * 0.9 + 0.15);
             emitGpuParticles([hitPoint.x, hitPoint.y, hitPoint.z], [0, 1, 0], 35, 0);
             awardXp(50, 'OBJECT DESTROYED');
           } else {
@@ -1362,6 +1422,7 @@ export default function App() {
       if (document.pointerLockElement !== canvasRef.current) return;
       if (!sessionModeRef.current) return;
       if (e.button === 0) {
+        engineRef.current?.audioEngine.resume();
         fireHeldRef.current = true;
         handleFire();
       } else if (e.button === 2) {
@@ -1370,8 +1431,7 @@ export default function App() {
         if (engine && !engine.isDead) {
           engine.weaponSystem.isADS = true;
           setIsADS(true);
-          engine.camera.fov = engine.weaponSystem.currentWeapon === 'railgun' ? 35 : fov - 18;
-          engine.camera.updateProjectionMatrix();
+          engine.targetFov = fov * (WEAPON_DEFINITIONS[engine.weaponSystem.currentWeapon].adsZoom ?? 0.8);
         }
       }
     };
@@ -1383,8 +1443,7 @@ export default function App() {
         if (engine) {
           engine.weaponSystem.isADS = false;
           setIsADS(false);
-          engine.camera.fov = fov;
-          engine.camera.updateProjectionMatrix();
+          engine.targetFov = fov;
         }
       }
     };
@@ -1402,6 +1461,8 @@ export default function App() {
         handleRespawn();
       } else if (e.code === 'KeyR' && !engine.isDead) {
         engine.weaponSystem.reload();
+      } else if (e.code === 'KeyF' && !engine.isDead) {
+        engine.weaponSystem.inspect();
       } else if (e.code === 'Digit1' && !engine.isDead) {
         if (engine.weaponSystem.currentWeapon !== 'rifle') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('rifle');
@@ -1551,6 +1612,17 @@ export default function App() {
         className="w-full h-full block cursor-crosshair"
       />
 
+      {contextLost && (
+        <div className="absolute inset-0 z-[90] bg-black/85 flex items-center justify-center text-center font-mono">
+          <div className="border border-amber-500/50 bg-black/80 rounded-xl p-6 max-w-md">
+            <div className="text-[10px] tracking-[0.35em] text-amber-400 mb-2">GPU DEVICE LOST</div>
+            <div className="text-white font-black text-xl mb-2">Graphics context was reset</div>
+            <p className="text-xs text-zinc-400 mb-4">The browser dropped the GPU context (driver reset, tab throttling or memory pressure). Waiting for it to recover…</p>
+            <button onClick={() => window.location.reload()} className="px-4 py-2 bg-amber-500 text-black font-bold rounded text-sm">RELOAD NOW</button>
+          </div>
+        </div>
+      )}
+
       {!webGPUCapable && sessionMode && (
         <div className="absolute inset-x-0 top-0 z-[70] bg-red-950/95 border-b border-red-400 px-4 py-3 text-center text-xs text-red-100">
           <b>WEBGPU REQUIRED:</b> This competitive build mandates a WebGPU-capable browser and GPU. Enable WebGPU or use a current Chromium-based browser.
@@ -1607,6 +1679,7 @@ export default function App() {
         frameTimeMs={frameTimeMs}
         latencyMs={latencyMs}
         activeParticles={activeParticles}
+        damageIndicators={damageIndicators}
         preset={currentPreset}
         isWebGPU={isWebGPU}
         isHost={isHostSession}

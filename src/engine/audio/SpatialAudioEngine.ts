@@ -21,7 +21,7 @@ export class SpatialAudioEngine {
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
       this.sfxGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.9, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(this.pendingVolume, this.ctx.currentTime);
       this.sfxGain.gain.setValueAtTime(0.95, this.ctx.currentTime);
 
       this.occlusionFilter = this.ctx.createBiquadFilter();
@@ -771,9 +771,17 @@ export class SpatialAudioEngine {
     return buffer;
   }
 
+  private pendingVolume: number = 0.9;
+
   public setMasterVolume(vol: number): void {
+    this.pendingVolume = Math.max(0, Math.min(1, Number.isFinite(vol) ? vol : 0.9));
     if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setValueAtTime(Math.max(0, Math.min(1, vol)), this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(this.pendingVolume, this.ctx.currentTime);
     }
+  }
+
+  /** Browsers suspend AudioContexts created before a user gesture — resume on first interaction. */
+  public resume(): void {
+    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume();
   }
 }

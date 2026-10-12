@@ -51,6 +51,7 @@ interface TacticalHUDProps {
   frameTimeMs: number;
   latencyMs: number;
   activeParticles: number;
+  damageIndicators?: { id: number; angle: number; time: number }[];
   preset: GraphicsPreset;
   isWebGPU: boolean;
   isHost: boolean;
@@ -101,6 +102,7 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   frameTimeMs,
   latencyMs,
   activeParticles,
+  damageIndicators = [],
   preset,
   isWebGPU,
   isHost,
@@ -131,6 +133,16 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   onSelectWeaponSlot
 }) => {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (damageIndicators.length === 0) return;
+    let raf = 0;
+    const loop = () => { setNowTick(Date.now()); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [damageIndicators.length]);
+  const liveIndicators = damageIndicators.filter(d => nowTick - d.time < 1400);
+  const recentHit = liveIndicators.length > 0 ? Math.max(0, 1 - (nowTick - liveIndicators[liveIndicators.length - 1].time) / 600) : 0;
   // Tab key for leaderboard, B for shop
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -161,6 +173,39 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
           }}
         />
       )}
+
+      {/* 1b. Hit flash vignette (snaps in on damage, decays over 0.6 s) */}
+      {recentHit > 0 && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ background: `radial-gradient(ellipse at center, transparent 45%, rgba(255, 40, 40, ${0.38 * recentHit}))` }}
+        />
+      )}
+
+      {/* 1c. Directional damage indicators (arc around the crosshair pointing at the attacker) */}
+      <div className="absolute left-1/2 top-1/2 w-0 h-0 pointer-events-none">
+        {liveIndicators.map((d) => {
+          const age = (nowTick - d.time) / 1400;
+          const alpha = age < 0.15 ? age / 0.15 : 1 - (age - 0.15) / 0.85;
+          return (
+            <div
+              key={d.id}
+              className="absolute left-0 top-0"
+              style={{ transform: `rotate(${(d.angle * 180) / Math.PI}deg)`, opacity: Math.max(0, alpha) }}
+            >
+              <div
+                className="absolute"
+                style={{
+                  left: -46, top: -150, width: 92, height: 42,
+                  background: 'radial-gradient(ellipse at 50% 100%, rgba(255,60,60,0.95) 0%, rgba(255,60,60,0.5) 45%, transparent 72%)',
+                  clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)',
+                  filter: 'drop-shadow(0 0 6px rgba(255,0,0,0.8))',
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
 
       {/* Top-Center: Rank, Coins, Armory Shop & Anti-Cheat */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3">

@@ -1,0 +1,82 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Persistent player settings. Versioned, validated and clamped on load so a
+ * corrupted or stale localStorage entry can never put the game in a bad state.
+ */
+import type { GraphicsPreset } from '../webgpu/WebGPUPipeline';
+
+export type BotDifficultySetting = 'easy' | 'balanced' | 'hard';
+
+export interface PlayerSettings {
+  version: number;
+  mouseSens: number;
+  fov: number;
+  masterVol: number;
+  preset: GraphicsPreset;
+  botDifficulty: BotDifficultySetting;
+  showDamageNumbers: boolean;
+  cameraShake: number; // 0..1 multiplier
+}
+
+const STORAGE_KEY = 'vanguard.settings.v1';
+const VERSION = 1;
+
+export const DEFAULT_SETTINGS: PlayerSettings = {
+  version: VERSION,
+  mouseSens: 1.0,
+  fov: 85,
+  masterVol: 0.85,
+  preset: 'ultra',
+  botDifficulty: 'easy',
+  showDamageNumbers: true,
+  cameraShake: 1.0,
+};
+
+const PRESETS: GraphicsPreset[] = ['low', 'medium', 'high', 'ultra', 'overdrive'];
+const DIFFS: BotDifficultySetting[] = ['easy', 'balanced', 'hard'];
+
+const num = (v: unknown, def: number, min: number, max: number): number => {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, n));
+};
+
+export function sanitizeSettings(raw: unknown): PlayerSettings {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    version: VERSION,
+    mouseSens: num(r.mouseSens, DEFAULT_SETTINGS.mouseSens, 0.05, 10),
+    fov: num(r.fov, DEFAULT_SETTINGS.fov, 60, 120),
+    masterVol: num(r.masterVol, DEFAULT_SETTINGS.masterVol, 0, 1),
+    preset: PRESETS.includes(r.preset as GraphicsPreset) ? (r.preset as GraphicsPreset) : DEFAULT_SETTINGS.preset,
+    botDifficulty: DIFFS.includes(r.botDifficulty as BotDifficultySetting) ? (r.botDifficulty as BotDifficultySetting) : DEFAULT_SETTINGS.botDifficulty,
+    showDamageNumbers: typeof r.showDamageNumbers === 'boolean' ? r.showDamageNumbers : DEFAULT_SETTINGS.showDamageNumbers,
+    cameraShake: num(r.cameraShake, DEFAULT_SETTINGS.cameraShake, 0, 1),
+  };
+}
+
+export function loadSettings(): PlayerSettings {
+  try {
+    if (typeof localStorage === 'undefined') return { ...DEFAULT_SETTINGS };
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    return sanitizeSettings(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+/** Debounced write — sliders can fire dozens of updates per second. */
+export function saveSettings(partial: Partial<PlayerSettings>): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const merged = sanitizeSettings({ ...loadSettings(), ...partial });
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch { /* quota / private mode */ }
+    }, 150);
+  } catch { /* ignore */ }
+}
