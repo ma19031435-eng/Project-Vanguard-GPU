@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && data.email is string && data.email.size() <= 128
+        && data.level is number && data.level >= 1 && data.level <= 1000
+        && data.xp is number && data.xp >= 0
+        && data.coins is number && data.coins >= 0
+        && data.kills is number && data.kills >= 0
+        && data.deaths is number && data.deaths >= 0
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 64))
+        && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 512))
+        && (!('rank' in data) || (data.rank is string && data.rank.size() <= 64))
+        && (!('authProvider' in data) || (data.authProvider is string && data.authProvider.size() <= 32))
+        && (!('matchesPlayed' in data) || (data.matchesPlayed is number && data.matchesPlayed >= 0))
+        && (!('matchesWon' in data) || (data.matchesWon is number && data.matchesWon >= 0))
+        && (!('equippedSkin' in data) || (data.equippedSkin is string && data.equippedSkin.size() <= 64))
+        && (!('equippedHat' in data) || (data.equippedHat is string && data.equippedHat.size() <= 64));
+    }
+
+    match /users/{userId} {
+      // Allow single document fetch for lobby profile and scoreboard
+      allow get: if isSignedIn() && isValidId(userId);
+
+      // Secure list queries restricted to user's own profile
+      allow list: if isSignedIn() && resource.data.id == request.auth.uid;
+
+      // Create new profile upon registration
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && incoming().id == request.auth.uid
+        && isValidUserProfile(incoming());
+
+      // Update existing profile (stats, loadout, rank, coins)
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && incoming().id == existing().id
+        && (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt)
+        && isValidUserProfile(incoming());
+
+      allow delete: if false;
+    }
+  }
+}

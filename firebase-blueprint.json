@@ -1,0 +1,100 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public profile and progression statistics for an authenticated Vanguard operator",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique Firebase Auth UID",
+          "maxLength": 128
+        },
+        "username": {
+          "type": "string",
+          "description": "Player in-game callsign",
+          "maxLength": 32,
+          "minLength": 2
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name or Google account name",
+          "maxLength": 64
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "maxLength": 128
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "Avatar photo URL or profile icon",
+          "maxLength": 512
+        },
+        "authProvider": {
+          "type": "string",
+          "description": "Authentication method used (google or password)",
+          "maxLength": 32
+        },
+        "level": {
+          "type": "number",
+          "description": "Current player level"
+        },
+        "xp": {
+          "type": "number",
+          "description": "Current XP progress"
+        },
+        "rank": {
+          "type": "string",
+          "description": "Current military competitive rank",
+          "maxLength": 64
+        },
+        "coins": {
+          "type": "number",
+          "description": "Earned Vanguard Coins / KR"
+        },
+        "kills": {
+          "type": "number",
+          "description": "Lifetime confirmed eliminations"
+        },
+        "deaths": {
+          "type": "number",
+          "description": "Lifetime deaths"
+        },
+        "matchesPlayed": {
+          "type": "number",
+          "description": "Lifetime matches played"
+        },
+        "matchesWon": {
+          "type": "number",
+          "description": "Lifetime match victories"
+        },
+        "equippedSkin": {
+          "type": "string",
+          "description": "Currently equipped weapon skin ID",
+          "maxLength": 64
+        },
+        "equippedHat": {
+          "type": "string",
+          "description": "Currently equipped operator helmet / hat ID",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account registration timestamp ISO string"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last profile update timestamp ISO string"
+        }
+      },
+      "required": ["id", "username", "email", "level", "xp", "coins", "kills", "deaths"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection of Vanguard user player profiles indexed by their Auth UID"
+    }
+  }
+}

@@ -4,10 +4,11 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Trophy, Flame, Sword, Settings, Users, Coins, Bot, ShieldCheck } from 'lucide-react';
+import { Trophy, Flame, Sword, Settings, Users, Coins, Bot, ShieldCheck, User, LogIn } from 'lucide-react';
 import { WeaponType, WEAPON_DEFINITIONS , Loadout, DEFAULT_LOADOUT } from '../../engine/weapons/WeaponSystem.ts';
 import { PlayerNetState } from '../../engine/netcode/P2PNetworkEngine.ts';
 import { GraphicsPreset } from '../../engine/webgpu/WebGPUPipeline.ts';
+import { UserProfile } from '../../firebase/userService.ts';
 
 export interface FloatingDamageNumber {
   id: string;
@@ -83,6 +84,8 @@ interface TacticalHUDProps {
   deaths?: number;
   targetKills?: number;
   presetAuto?: boolean;
+  currentUser?: UserProfile | null;
+  onOpenAuth?: () => void;
 }
 
 export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }> = ({
@@ -139,6 +142,8 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   deaths,
   targetKills = 10,
   presetAuto = false,
+  currentUser,
+  onOpenAuth,
 }) => {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -247,7 +252,28 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
           <div className="absolute inset-x-0 bottom-1 text-center text-[9px] text-white/50 tabular-nums">{Math.round(((-playerYaw * 180) / Math.PI + 360) % 360)}°</div>
         </div>
         <div className="pt-1">
-          <div className={label}>Rank {level}</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className={label}>Rank {level}</div>
+            {onOpenAuth && (
+              <button
+                onClick={onOpenAuth}
+                className="pointer-events-auto px-1.5 py-0.5 rounded bg-black/60 hover:bg-black/90 border border-white/20 hover:border-cyan-400 text-[9px] font-bold text-cyan-300 flex items-center gap-1 transition cursor-pointer"
+                title={currentUser ? `Signed in as ${currentUser.username}` : 'Sign in / Register'}
+              >
+                {currentUser ? (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span className="max-w-[70px] truncate">{currentUser.username}</span>
+                  </>
+                ) : (
+                  <>
+                    <LogIn className="w-2.5 h-2.5 text-amber-400" />
+                    <span className="text-amber-300">AUTH</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           <div className="text-sm font-bold leading-tight">{rankName}</div>
           <div className="mt-1.5 w-28 h-1 bg-white/10 rounded-full overflow-hidden">
             <div className="h-full bg-amber-400 rounded-full transition-all duration-300" style={{ width: `${Math.min(100, (xp / xpToNextLevel) * 100)}%` }} />
@@ -493,6 +519,11 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
                 <span className="text-white/35 ml-2">{isWebGPU ? 'WebGPU' : 'WebGL'} · {latencyMs.toFixed(2)} ms raycast · {myKills}/{myDeaths} K/D</span>
               </div>
               <div className="flex items-center gap-2">
+                {onOpenAuth && (
+                  <button onClick={onOpenAuth} className="px-2.5 py-1 rounded-md border border-cyan-400/40 text-cyan-300 hover:bg-cyan-950/60 flex items-center gap-1.5 font-bold">
+                    <User className="w-3.5 h-3.5" /> {currentUser ? currentUser.username : 'Sign In'}
+                  </button>
+                )}
                 <button onClick={onOpenSettings} className="px-2.5 py-1 rounded-md border border-white/15 text-white/70 hover:text-white flex items-center gap-1.5"><Settings className="w-3.5 h-3.5" /> Settings</button>
                 <button onClick={onOpenLobby} className="px-2.5 py-1 rounded-md border border-white/15 text-white/70 hover:text-white flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Lobby</button>
               </div>

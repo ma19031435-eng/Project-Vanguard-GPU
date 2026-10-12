@@ -3,13 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import React, { useState } from 'react';
-import { X, Users, Copy, Check, Play, Bot, Globe, ShieldCheck, Map, Swords, Lock, Radio } from 'lucide-react';
+import { X, Users, Copy, Check, Play, Bot, Globe, ShieldCheck, Map, Swords, Lock, Radio, User, LogIn } from 'lucide-react';
 import { PlayerNetState, NetworkStatus } from '../../engine/netcode/P2PNetworkEngine.ts';
+import { UserProfile } from '../../firebase/userService.ts';
 
 interface LobbyModalProps {
   isOpen: boolean; onClose: () => void; roomId: string; isHost: boolean; isConnected: boolean;
   networkStatus?: NetworkStatus;
   allPlayers: PlayerNetState[]; onHostNewRoom: () => void; onJoinRoom: (code: string) => void | Promise<void>; onAddBot: () => void;
+  currentUser?: UserProfile | null;
+  onOpenAuth?: () => void;
 }
 
 const MAPS = [
@@ -22,7 +25,11 @@ const MAPS = [
 ];
 const MODES = ['Team Deathmatch', 'Free For All', 'Gun Game', 'Hardpoint', 'Elimination'];
 
-export const LobbyModal: React.FC<LobbyModalProps> = ({ isOpen, onClose, roomId, isHost, isConnected, networkStatus = 'idle', allPlayers, onHostNewRoom, onJoinRoom, onAddBot }) => {
+export const LobbyModal: React.FC<LobbyModalProps> = ({
+  isOpen, onClose, roomId, isHost, isConnected, networkStatus = 'idle',
+  allPlayers, onHostNewRoom, onJoinRoom, onAddBot,
+  currentUser, onOpenAuth
+}) => {
   const [joinCode, setJoinCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -41,8 +48,30 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ isOpen, onClose, roomId,
   return <div className="fixed inset-0 z-50 bg-[#05070c]/95 backdrop-blur-xl flex items-center justify-center p-2 sm:p-3 hud-font select-none">
     <div className="bg-[#090d15] border border-cyan-400/30 rounded-2xl w-full max-w-5xl max-h-[calc(100dvh-1rem)] sm:max-h-[94dvh] overflow-hidden flex flex-col shadow-[0_0_80px_rgba(6,182,212,.16)] text-zinc-200">
       <header className="shrink-0 flex justify-between items-center px-4 sm:px-6 py-3 sm:py-4 border-b border-white/10 bg-gradient-to-r from-cyan-950/40 to-transparent">
-        <div><div className="flex items-center gap-2 text-cyan-300 font-black text-xl tracking-widest"><Globe className="w-5 h-5"/> VANGUARD NETWORK</div><div className="text-[10px] text-zinc-500 mt-1">P2P PREVIEW • DEDICATED MATCHMAKING INFRASTRUCTURE COMING LATER</div></div>
-        <button onClick={onClose} aria-label="Close" className="p-2 hover:bg-white/10 active:bg-white/20 rounded-lg"><X className="w-6 h-6"/></button>
+        <div>
+          <div className="flex items-center gap-2 text-cyan-300 font-black text-xl tracking-widest"><Globe className="w-5 h-5"/> VANGUARD NETWORK</div>
+          <div className="text-[10px] text-zinc-500 mt-1">FIREBASE CLOUD PROFILE &bull; HOST-AUTHORITATIVE P2P</div>
+        </div>
+        <div className="flex items-center gap-3">
+          {currentUser ? (
+            <button
+              onClick={onOpenAuth}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cyan-950/80 border border-cyan-400/50 hover:bg-cyan-900/80 text-cyan-300 text-xs font-bold transition cursor-pointer"
+            >
+              <User className="w-3.5 h-3.5 text-cyan-400" />
+              <span>{currentUser.username} (LVL {currentUser.level})</span>
+            </button>
+          ) : (
+            <button
+              onClick={onOpenAuth}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-black shadow-[0_0_15px_rgba(245,158,11,0.3)] transition cursor-pointer"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>SIGN IN / REGISTER</span>
+            </button>
+          )}
+          <button onClick={onClose} aria-label="Close" className="p-2 hover:bg-white/10 active:bg-white/20 rounded-lg cursor-pointer"><X className="w-6 h-6"/></button>
+        </div>
       </header>
 
       <div className="flex border-b border-white/10 px-6">

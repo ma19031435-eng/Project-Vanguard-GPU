@@ -19,6 +19,10 @@ import { SettingsModal } from './components/Modals/SettingsModal.tsx';
 import { LobbyModal } from './components/Modals/LobbyModal.tsx';
 import { LoadoutModal } from './components/Modals/LoadoutModal.tsx';
 import { ShopModal } from './components/Modals/ShopModal.tsx';
+import { AuthModal } from './components/Modals/AuthModal.tsx';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase/config.ts';
+import { UserProfile, ensureUserProfile, subscribeToUserProfile, saveUserProgress, createGuestProfile } from './firebase/userService.ts';
 import { ShopSystem, WeaponSkinId, CharacterHatId, SHOP_SKINS } from './engine/shop/ShopSystem.ts';
 import { SentinelAntiCheat } from './engine/anticheat/SentinelAntiCheat.ts';
 import { MainLobby, PauseOverlay, SessionMode } from './components/Lobby/MainLobby.tsx';
@@ -145,6 +149,11 @@ export default function App() {
   const [isPointerLocked, setIsPointerLocked] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lobbyOpen, setLobbyOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const currentUserRef = useRef<UserProfile | null>(null);
+  currentUserRef.current = currentUser;
   const [botDifficulty, setBotDifficulty] = useState<BotDifficulty>(SAVED.botDifficulty);
   const botDifficultyRef = useRef<BotDifficulty>('easy');
   botDifficultyRef.current = botDifficulty;
@@ -321,6 +330,123 @@ export default function App() {
     isDead: boolean;
   } | null>(null);
 
+  // Cloud Progress Syncing Helper
+  const syncProgressToCloud = useCallback((updates: Partial<Omit<UserProfile, 'id' | 'createdAt'>>) => {
+    const user = currentUserRef.current;
+    if (user?.id) {
+      saveUserProgress(user.id, updates).catch(e => {
+        console.warn('Cloud sync error:', e);
+      });
+    }
+  }, []);
+
+  // Firebase Auth Lifecycle & Live Cloud Profile Sync
+  useEffect(() => {
+    let unsubscribeProfile: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
+      if (fbUser) {
+        try {
+          const profile = await ensureUserProfile(fbUser);
+          setCurrentUser(profile);
+          setAuthResolved(true);
+
+          unsubscribeProfile = subscribeToUserProfile(fbUser.uid, (liveProfile) => {
+            if (liveProfile) {
+              setCurrentUser(liveProfile);
+              setPlayerLevel(liveProfile.level || 1);
+              setPlayerXp(liveProfile.xp || 0);
+              setCoins(liveProfile.coins || 100);
+              shopRef.current.coins = liveProfile.coins || 100;
+              setPlayerKills(liveProfile.kills || 0);
+              playerKillsRef.current = liveProfile.kills || 0;
+              setPlayerDeaths(liveProfile.deaths || 0);
+              playerDeathsRef.current = liveProfile.deaths || 0;
+              if (liveProfile.equippedSkin) {
+                setActiveSkin(liveProfile.equippedSkin as WeaponSkinId);
+                shopRef.current.equippedSkin = liveProfile.equippedSkin as WeaponSkinId;
+                engineRef.current?.weaponSystem.setSkin(liveProfile.equippedSkin as WeaponSkinId);
+              }
+              if (liveProfile.equippedHat) {
+                setActiveHat(liveProfile.equippedHat as CharacterHatId);
+                shopRef.current.equippedHat = liveProfile.equippedHat as CharacterHatId;
+              }
+            }
+          });
+        } catch (err) {
+          console.error('Firebase Auth profile load failed:', err);
+          setAuthResolved(true);
+        }
+      } else {
+        // Not authenticated in Firebase - check if active guest session exists
+        try {
+          const savedGuest = localStorage.getItem('vanguard.guest_profile');
+          if (savedGuest) {
+            const parsed = JSON.parse(savedGuest) as UserProfile;
+            setCurrentUser(parsed);
+            setPlayerLevel(parsed.level || 1);
+            setPlayerXp(parsed.xp || 0);
+            setCoins(parsed.coins || 100);
+            shopRef.current.coins = parsed.coins || 100;
+            setPlayerKills(parsed.kills || 0);
+            playerKillsRef.current = parsed.kills || 0;
+            setPlayerDeaths(parsed.deaths || 0);
+            playerDeathsRef.current = parsed.deaths || 0;
+            if (parsed.equippedSkin) {
+              setActiveSkin(parsed.equippedSkin as WeaponSkinId);
+              shopRef.current.equippedSkin = parsed.equippedSkin as WeaponSkinId;
+              engineRef.current?.weaponSystem.setSkin(parsed.equippedSkin as WeaponSkinId);
+            }
+            if (parsed.equippedHat) {
+              setActiveHat(parsed.equippedHat as CharacterHatId);
+              shopRef.current.equippedHat = parsed.equippedHat as CharacterHatId;
+            }
+          } else {
+            setCurrentUser(null);
+          }
+        } catch {
+          setCurrentUser(null);
+        }
+        setAuthResolved(true);
+      }
+    });
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
+  }, []);
+
+  const handleContinueAsGuest = useCallback((customCallsign?: string) => {
+    const guest = createGuestProfile(customCallsign);
+    try {
+      localStorage.setItem('vanguard.guest_profile', JSON.stringify(guest));
+    } catch {}
+    setCurrentUser(guest);
+    setPlayerLevel(guest.level);
+    setPlayerXp(guest.xp);
+    setCoins(guest.coins);
+    shopRef.current.coins = guest.coins;
+    setPlayerKills(guest.kills);
+    playerKillsRef.current = guest.kills;
+    setPlayerDeaths(guest.deaths);
+    playerDeathsRef.current = guest.deaths;
+    setAuthModalOpen(false);
+  }, []);
+
+  const handleAuthSuccess = useCallback((profile: UserProfile) => {
+    try {
+      localStorage.removeItem('vanguard.guest_profile');
+    } catch {}
+    setCurrentUser(profile);
+    setAuthModalOpen(false);
+  }, []);
+
   // XP Awarding & Leveling Logic
   const awardXp = useCallback((amount: number, reason: string) => {
     const id = Math.random().toString();
@@ -341,13 +467,15 @@ export default function App() {
           setLevelUpNotification(rank);
           engineRef.current?.audioEngine.playLevelUp();
           setTimeout(() => setLevelUpNotification(null), 3500);
+          syncProgressToCloud({ level: newLvl, xp: nextXp - xpToNextLevel, rank });
           return newLvl;
         });
         return nextXp - xpToNextLevel;
       }
+      syncProgressToCloud({ xp: nextXp });
       return nextXp;
     });
-  }, [xpToNextLevel]);
+  }, [xpToNextLevel, syncProgressToCloud]);
 
   const handleCycleBotDifficulty = useCallback(() => {
     setBotDifficulty(prev => {
@@ -367,12 +495,13 @@ export default function App() {
   const handleAwardCoins = useCallback((amount: number, reason: string) => {
     const updated = shopRef.current.addCoins(amount);
     setCoins(updated);
+    syncProgressToCloud({ coins: updated });
     setChatMessages(prev => [...prev, {
       sender: 'RIVALS ARMORY',
       text: `+${amount} Coins earned (${reason})! Balance: ${updated} ⛁`,
       time: Date.now()
     }]);
-  }, []);
+  }, [syncProgressToCloud]);
 
   const handleToggleBots = useCallback(() => {
     setBotsEnabled(prev => {
@@ -392,11 +521,13 @@ export default function App() {
   const handleSkinChanged = useCallback((skinId: WeaponSkinId) => {
     setActiveSkin(skinId);
     engineRef.current?.weaponSystem.setSkin(skinId);
-  }, []);
+    syncProgressToCloud({ equippedSkin: skinId });
+  }, [syncProgressToCloud]);
 
   const handleHatChanged = useCallback((hatId: CharacterHatId) => {
     setActiveHat(hatId);
-  }, []);
+    syncProgressToCloud({ equippedHat: hatId });
+  }, [syncProgressToCloud]);
 
   const handleSelectWeapon = useCallback((w: WeaponType) => {
     const engine = engineRef.current;
@@ -442,6 +573,10 @@ export default function App() {
   }, []);
 
   const requestPointerLock = useCallback(() => {
+    if (!currentUserRef.current) {
+      setAuthModalOpen(true);
+      return;
+    }
     const canvas = canvasRef.current;
     if (isMobileRef.current) {
       setMobilePlaying(true);
@@ -473,6 +608,10 @@ export default function App() {
 
   // Deploy from lobby into one of the three session types.
   const handleSelectMode = useCallback((mode: SessionMode) => {
+    if (!currentUserRef.current) {
+      setAuthModalOpen(true);
+      return;
+    }
     const engine = engineRef.current;
     setSessionMode(mode);
     setRoundWinner(null);
@@ -564,7 +703,12 @@ export default function App() {
     setIsPlayerDead(true);
     setPlayerHp(0);
     setKillerName(killer);
-    setPlayerDeaths(prev => { playerDeathsRef.current = prev + 1; return prev + 1; });
+    setPlayerDeaths(prev => {
+      const next = prev + 1;
+      playerDeathsRef.current = next;
+      syncProgressToCloud({ deaths: next });
+      return next;
+    });
 
     engine.audioEngine.playHitmarker(true, true);
     setKillFeed(prev => [
@@ -1596,7 +1740,12 @@ export default function App() {
         // BOT ELIMINATED!
         if (hitBot.state.health <= 0) {
           hitBot.state.deaths++;
-          setPlayerKills(prev => { playerKillsRef.current = prev + 1; return prev + 1; });
+          setPlayerKills(prev => {
+            const next = prev + 1;
+            playerKillsRef.current = next;
+            syncProgressToCloud({ kills: next });
+            return next;
+          });
 
           // Killstreak & Rival Coin Rewards
           setKillStreak(prev => { matchStatsRef.current.bestStreak = Math.max(matchStatsRef.current.bestStreak, prev + 1); return prev + 1; });
@@ -1950,16 +2099,20 @@ export default function App() {
           onSelectMode={handleSelectMode}
           onOpenArmory={() => setShopOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
+          currentUser={currentUser}
+          onOpenAuth={() => setAuthModalOpen(true)}
         />
       )}
 
-      {sessionMode && !(isMobile ? mobilePlaying : isPointerLocked) && !isPlayerDead && !settingsOpen && !shopOpen && !lobbyOpen && !roundWinner && (
+      {sessionMode && !(isMobile ? mobilePlaying : isPointerLocked) && !isPlayerDead && !settingsOpen && !shopOpen && !lobbyOpen && !authModalOpen && !roundWinner && (
         <PauseOverlay
           mode={sessionMode}
           onResume={requestPointerLock}
           onReturnToLobby={handleReturnToLobby}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenLobby={() => setLobbyOpen(true)}
+          currentUser={currentUser}
+          onOpenAuth={() => setAuthModalOpen(true)}
         />
       )}
 
@@ -2156,6 +2309,8 @@ export default function App() {
         isConnected={networkStatus === 'connected'}
         networkStatus={networkStatus}
         allPlayers={allPlayers}
+        currentUser={currentUser}
+        onOpenAuth={() => setAuthModalOpen(true)}
         onHostNewRoom={() => {
           const engine = engineRef.current;
           if (!engine) return;
@@ -2186,6 +2341,15 @@ export default function App() {
           setBotsEnabled(true);
           applyBotVisibility(true);
         }}
+      />
+
+      <AuthModal
+        isOpen={authModalOpen || (authResolved && !currentUser)}
+        onClose={() => setAuthModalOpen(false)}
+        currentUser={currentUser}
+        isMandatory={authResolved && !currentUser}
+        onAuthSuccess={handleAuthSuccess}
+        onContinueAsGuest={handleContinueAsGuest}
       />
     </div>
   );

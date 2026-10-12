@@ -5,8 +5,9 @@
 import React from 'react';
 import {
   Bot, Users, Target, Settings, ShoppingBag, Cpu, Wifi, WifiOff, Shield,
-  Zap, Crosshair, ChevronRight, Trophy, Coins, Map as MapIcon, Swords
+  Zap, Crosshair, ChevronRight, Trophy, Coins, Map as MapIcon, Swords, User, LogIn
 } from 'lucide-react';
+import { UserProfile } from '../../firebase/userService.ts';
 
 export type SessionMode = 'bots' | 'friends' | 'range';
 
@@ -26,6 +27,8 @@ interface MainLobbyProps {
   onSelectMode: (mode: SessionMode) => void;
   onOpenArmory: () => void;
   onOpenSettings: () => void;
+  currentUser?: UserProfile | null;
+  onOpenAuth?: () => void;
 }
 
 interface PlaylistCard {
@@ -79,7 +82,8 @@ const PLAYLISTS: PlaylistCard[] = [
 export const MainLobby: React.FC<MainLobbyProps> = ({
   playerLevel, rankName, xp, xpToNextLevel, coins, kills, deaths,
   webGPUCapable, isWebGPU, networkStatus, weaponCount, arenaCount,
-  onSelectMode, onOpenArmory, onOpenSettings
+  onSelectMode, onOpenArmory, onOpenSettings,
+  currentUser, onOpenAuth
 }) => {
   const xpPct = Math.min(100, Math.round((xp / Math.max(1, xpToNextLevel)) * 100));
   const kd = deaths > 0 ? (kills / deaths).toFixed(2) : kills.toFixed(2);
@@ -119,6 +123,32 @@ export const MainLobby: React.FC<MainLobbyProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenAuth && (
+              currentUser ? (
+                <button
+                  onClick={onOpenAuth}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-black transition cursor-pointer ${
+                    currentUser.authProvider === 'guest'
+                      ? 'bg-amber-950/70 border border-amber-400/50 hover:bg-amber-900/70 text-amber-300'
+                      : 'bg-cyan-950/80 border border-cyan-400/50 hover:bg-cyan-900/80 text-cyan-300'
+                  }`}
+                >
+                  <User className={`w-4 h-4 ${currentUser.authProvider === 'guest' ? 'text-amber-400' : 'text-cyan-400'}`} />
+                  <span className="max-w-[120px] truncate">{currentUser.username}</span>
+                  <span className={`w-2 h-2 rounded-full ${currentUser.authProvider === 'guest' ? 'bg-amber-400' : 'bg-emerald-400'} animate-pulse`}></span>
+                  {currentUser.authProvider === 'guest' && (
+                    <span className="text-[9px] bg-amber-400/20 text-amber-300 px-1 py-0.5 rounded border border-amber-400/40 uppercase">Upgrade</span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={onOpenAuth}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-black shadow-[0_0_15px_rgba(245,158,11,0.3)] transition cursor-pointer"
+                >
+                  <LogIn className="w-4 h-4" /> SIGN IN
+                </button>
+              )
+            )}
             <button onClick={onOpenArmory} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs font-black hover:bg-amber-500/25 transition cursor-pointer">
               <ShoppingBag className="w-4 h-4" /> ARMORY
             </button>
@@ -134,13 +164,36 @@ export const MainLobby: React.FC<MainLobbyProps> = ({
           <aside className="space-y-4">
             <div className="rounded-2xl border border-white/10 bg-black/40 p-5">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-zinc-700 to-zinc-900 border border-white/15 flex items-center justify-center text-2xl font-black text-cyan-300">
-                  {playerLevel}
+                <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-cyan-600 to-zinc-900 border border-cyan-400/30 flex items-center justify-center text-2xl font-black text-cyan-300 overflow-hidden shadow-lg">
+                  {currentUser?.avatarUrl ? (
+                    <img src={currentUser.avatarUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    currentUser?.username.slice(0, 2).toUpperCase() || playerLevel
+                  )}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[10px] text-zinc-500 tracking-widest">OPERATOR</div>
-                  <div className="font-black text-white text-lg truncate">COMMANDER</div>
+                  <div className="text-[10px] text-zinc-500 tracking-widest flex items-center justify-between">
+                    <span>OPERATOR</span>
+                    {currentUser && (
+                      currentUser.authProvider === 'guest' ? (
+                        <span className="text-amber-400 text-[9px] font-bold">● GUEST (LOCAL)</span>
+                      ) : (
+                        <span className="text-emerald-400 text-[9px] font-bold">● CLOUD SYNCED</span>
+                      )
+                    )}
+                  </div>
+                  <div className="font-black text-white text-lg truncate">
+                    {currentUser ? currentUser.username : 'GUEST RECRUIT'}
+                  </div>
                   <div className="text-[11px] text-amber-300 font-bold truncate">{rankName}</div>
+                  {!currentUser && onOpenAuth && (
+                    <button
+                      onClick={onOpenAuth}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 underline font-semibold mt-0.5 cursor-pointer"
+                    >
+                      Sign in to save progress
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="mt-4">
@@ -255,15 +308,26 @@ export const PauseOverlay: React.FC<{
   onReturnToLobby: () => void;
   onOpenSettings: () => void;
   onOpenLobby: () => void;
-}> = ({ mode, onResume, onReturnToLobby, onOpenSettings, onOpenLobby }) => (
+  currentUser?: UserProfile | null;
+  onOpenAuth?: () => void;
+}> = ({ mode, onResume, onReturnToLobby, onOpenSettings, onOpenLobby, currentUser, onOpenAuth }) => (
   <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6 hud-font select-none">
-    <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#090d15]/95 p-6 shadow-[0_0_60px_rgba(0,0,0,0.6)]">
-      <div className="text-[10px] text-zinc-500 tracking-widest">SESSION PAUSED</div>
+    <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#090d15]/95 p-6 shadow-[0_0_60px_rgba(0,0,0,0.6)] text-zinc-200">
+      <div className="flex items-center justify-between text-[10px] text-zinc-500 tracking-widest">
+        <span>SESSION PAUSED</span>
+        {currentUser && <span className="text-emerald-400 font-bold">● {currentUser.username}</span>}
+      </div>
       <div className="text-xl font-black text-white mt-1">
         {mode === 'bots' ? 'BOT SKIRMISH' : mode === 'friends' ? 'PRIVATE MATCH' : 'SHOOTING RANGE'}
       </div>
       <div className="mt-5 space-y-2">
         <button onClick={onResume} className="w-full py-3 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-black text-sm transition cursor-pointer">RESUME (CLICK TO LOCK)</button>
+        {onOpenAuth && (
+          <button onClick={onOpenAuth} className="w-full py-2.5 rounded-xl bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-400/40 text-cyan-300 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer">
+            <User className="w-3.5 h-3.5" />
+            <span>{currentUser ? `PROFILE: ${currentUser.username}` : 'SIGN IN / REGISTER (FIREBASE)'}</span>
+          </button>
+        )}
         {mode === 'friends' && (
           <button onClick={onOpenLobby} className="w-full py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-zinc-200 font-black text-xs transition cursor-pointer">ROOM &amp; INVITES</button>
         )}
