@@ -25,7 +25,7 @@ const CinematicShader = {
     uAberration: { value: 0.0022 },
     uGrain: { value: 0.02 },
     uSaturation: { value: 1.08 },
-    uContrast: { value: 1.03 }
+    uContrast: { value: 1.08 }
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -131,7 +131,7 @@ export class CinematicPipeline {
     this.composer.addPass(new RenderPass(scene, camera));
 
     // Bloom only on genuinely hot pixels (emissives, sun) — threshold sits above the HDR sky.
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.35, 0.3, 1.6);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.25, 1.8);
     this.composer.addPass(this.bloom);
 
     // Tone mapping + sRGB first, then grade on display-referred colour.
@@ -168,7 +168,7 @@ export class CinematicPipeline {
     this.scene.add(this.sky); // re-attach after rendering into PMREM
     this.scene.environment = this.envTarget.texture;
     // The sky is HDR-bright; keep IBL contribution modest so surfaces don't wash out.
-    this.scene.environmentIntensity = 0.22;
+    this.scene.environmentIntensity = 0.15;
   }
 
   public setSize(w: number, h: number): void {
