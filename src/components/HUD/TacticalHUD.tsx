@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Crosshair, Shield, Heart, Zap, Terminal, Trophy, 
   Settings, Users, Radio, Activity, Cpu, Sparkles,
@@ -55,8 +55,6 @@ interface TacticalHUDProps {
   isWebGPU: boolean;
   isHost: boolean;
   roomId: string;
-  onSendChat: (text: string) => void;
-  chatMessages: { sender: string; text: string; time: number }[];
   onOpenSettings: () => void;
   onOpenLobby: () => void;
   currentSpeed: number;
@@ -107,8 +105,6 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   isWebGPU,
   isHost,
   roomId,
-  onSendChat,
-  chatMessages,
   onOpenSettings,
   onOpenLobby,
   currentSpeed = 0,
@@ -135,29 +131,13 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   onSelectWeaponSlot
 }) => {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState('');
-  const chatBottomRef = useRef<HTMLDivElement>(null);
-
-  // Tab key for leaderboard, Enter for chat
+  // Tab key for leaderboard, B for shop
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Tab') {
         e.preventDefault();
         setShowLeaderboard(prev => !prev);
-      } else if (e.code === 'Enter') {
-        if (!chatOpen) {
-          setChatOpen(true);
-        } else if (chatInput.trim()) {
-          onSendChat(chatInput);
-          setChatInput('');
-          setChatOpen(false);
-        } else {
-          setChatOpen(false);
-        }
-      } else if (e.code === 'Escape' && chatOpen) {
-        setChatOpen(false);
-      } else if (e.code === 'KeyB' && !chatOpen) {
+      } else if (e.code === 'KeyB') {
         e.preventDefault();
         onOpenShop?.();
       }
@@ -165,11 +145,7 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [chatOpen, chatInput, onSendChat]);
-
-  useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+  }, [onOpenShop]);
 
   const currentWeaponDef = WEAPON_DEFINITIONS[weapon];
   const crosshairGap = Math.max(8, Math.min(36, spreadBloom * 240));
@@ -683,44 +659,6 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
             </div>
           )}
         </div>
-      </div>
-
-      {/* 7. Bottom-Center: Operational Match Chatbox */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-96 pointer-events-auto">
-        <div className="bg-black/60 backdrop-blur border border-zinc-800 rounded-lg p-2 max-h-36 overflow-y-auto mb-1">
-          {chatMessages.slice(-5).map((m, i) => (
-            <div key={i} className="text-[11px] mb-1">
-              <span className="font-bold text-cyan-400">{m.sender}: </span>
-              <span className="text-zinc-200">{m.text}</span>
-            </div>
-          ))}
-          <div ref={chatBottomRef} />
-        </div>
-
-        {chatOpen && (
-          <div className="flex gap-1 bg-black/90 p-1 border border-cyan-500/50 rounded-lg">
-            <input
-              type="text"
-              autoFocus
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Press Enter to send (e.g. /bot, /quality, /fps)..."
-              className="flex-1 bg-transparent border-none text-white text-xs px-2 py-1 outline-none font-mono"
-            />
-            <button
-              onClick={() => {
-                if (chatInput.trim()) {
-                  onSendChat(chatInput);
-                  setChatInput('');
-                  setChatOpen(false);
-                }
-              }}
-              className="px-2 py-0.5 bg-cyan-600 text-white rounded text-[10px] font-bold"
-            >
-              SEND
-            </button>
-          </div>
-        )}
       </div>
 
       {/* 8. Global Match Leaderboard Overlay (Tab) */}

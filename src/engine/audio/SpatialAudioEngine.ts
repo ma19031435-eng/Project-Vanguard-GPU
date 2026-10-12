@@ -555,6 +555,183 @@ export class SpatialAudioEngine {
     noise.start(t);
   }
 
+  /**
+   * .50 AE Hand Cannon — sharp, high-pitched crack with a hard metallic slide clack.
+   */
+  public playPistol(pos?: [number, number, number], isOccluded: boolean = false): void {
+    if (!this.ctx) this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const dest = this.getDestination(pos, isOccluded);
+
+    this.burst(dest, t, 0.035, 0.98, 'highpass', 2200, 1.3, 0.035);
+    this.burst(dest, t, 0.12, 0.75, 'bandpass', 1100, 0.9, 0.12, 3.0, 380);
+    this.tone(dest, t, 'sine', 210, 45, 1.0, 0.1);
+    // slide cycling clack
+    this.tone(dest, t + 0.055, 'square', 1800, 900, 0.12, 0.03);
+    this.burst(dest, t + 0.06, 0.25, 0.3, 'lowpass', 700, 0.25, 0.25);
+  }
+
+  /**
+   * RPG launch — ignition pop, rocket motor whoosh with doppler-ish pitch slide.
+   */
+  public playRPGLaunch(pos?: [number, number, number], isOccluded: boolean = false): void {
+    if (!this.ctx) this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const dest = this.getDestination(pos, isOccluded);
+
+    this.burst(dest, t, 0.08, 0.9, 'lowpass', 1800, 1.1, 0.08);
+    this.tone(dest, t, 'triangle', 120, 30, 1.2, 0.25);
+    // motor whoosh
+    const whoosh = this.ctx.createBufferSource();
+    whoosh.buffer = this.createGunpowderBuffer(0.9, 0.55);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.setValueAtTime(1.2, t);
+    f.frequency.setValueAtTime(400, t);
+    f.frequency.exponentialRampToValueAtTime(2600, t + 0.35);
+    f.frequency.exponentialRampToValueAtTime(300, t + 0.9);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.9, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    whoosh.connect(f); f.connect(g); g.connect(dest);
+    whoosh.start(t);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reload foley — every weapon has its own stage set (driven by WeaponSystem.onReloadStage)
+  // ---------------------------------------------------------------------------
+  public playReloadStage(weapon: string, stage: string): void {
+    if (!this.ctx) this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const d = this.sfxGain!;
+    const key = `${weapon}:${stage}`;
+
+    switch (key) {
+      // --- Assault rifle: heavy steel mag, loud charging handle ---
+      case 'rifle:magOut': this.click(d, t, 520, 0.05, 0.5); this.burst(d, t + 0.01, 0.12, 0.5, 'lowpass', 900, 0.4, 0.12); break;
+      case 'rifle:magIn': this.click(d, t, 380, 0.04, 0.6); this.click(d, t + 0.05, 260, 0.08, 0.9); this.tone(d, t + 0.05, 'sine', 140, 60, 0.5, 0.1); break;
+      case 'rifle:bolt': this.slideNoise(d, t, 0.09, 1600, 0.6); this.click(d, t + 0.1, 700, 0.05, 0.9); this.click(d, t + 0.11, 300, 0.07, 0.7); break;
+
+      // --- SMG: lighter polymer mag, quick snappy bolt ---
+      case 'smg:magOut': this.click(d, t, 900, 0.03, 0.4); this.burst(d, t, 0.08, 0.6, 'bandpass', 1400, 0.3, 0.08); break;
+      case 'smg:magIn': this.click(d, t, 1100, 0.025, 0.5); this.click(d, t + 0.03, 600, 0.05, 0.7); break;
+      case 'smg:bolt': this.slideNoise(d, t, 0.05, 2400, 0.5); this.click(d, t + 0.05, 1500, 0.03, 0.8); break;
+
+      // --- Pistol: slide lock, mag, slide release ---
+      case 'pistol:slideLock': this.slideNoise(d, t, 0.06, 2000, 0.5); this.click(d, t + 0.06, 1900, 0.03, 0.7); break;
+      case 'pistol:magOut': this.click(d, t, 1300, 0.03, 0.5); this.burst(d, t + 0.01, 0.07, 0.5, 'highpass', 900, 0.25, 0.07); break;
+      case 'pistol:magIn': this.click(d, t, 800, 0.03, 0.6); this.click(d, t + 0.04, 450, 0.06, 0.8); break;
+      case 'pistol:slideRelease': this.click(d, t, 2200, 0.02, 0.9); this.click(d, t + 0.015, 900, 0.05, 0.9); this.tone(d, t, 'sine', 200, 90, 0.3, 0.06); break;
+
+      // --- Shotgun: shell into tube, pump rack ---
+      case 'shotgun:shell0': case 'shotgun:shell1': case 'shotgun:shell2': case 'shotgun:shell3':
+        this.click(d, t, 1000, 0.03, 0.45); this.click(d, t + 0.03, 420, 0.07, 0.7); this.burst(d, t, 0.06, 0.4, 'bandpass', 2400, 0.2, 0.06, 2.0); break;
+      case 'shotgun:pump': this.slideNoise(d, t, 0.1, 1200, 0.8); this.click(d, t + 0.1, 500, 0.06, 1.0); this.slideNoise(d, t + 0.17, 0.08, 1200, 0.7); this.click(d, t + 0.25, 420, 0.07, 1.0); break;
+
+      // --- Sniper: bolt-action ---
+      case 'railgun:boltOpen': this.click(d, t, 1600, 0.03, 0.8); this.slideNoise(d, t + 0.03, 0.12, 1500, 0.7); this.click(d, t + 0.15, 700, 0.05, 0.6); break;
+      case 'railgun:magOut': this.click(d, t, 600, 0.05, 0.6); this.burst(d, t, 0.1, 0.5, 'lowpass', 800, 0.3, 0.1); break;
+      case 'railgun:magIn': this.click(d, t, 500, 0.04, 0.7); this.click(d, t + 0.05, 300, 0.08, 0.9); break;
+      case 'railgun:boltClose': this.slideNoise(d, t, 0.12, 1500, 0.7); this.click(d, t + 0.12, 900, 0.04, 1.0); this.click(d, t + 0.16, 400, 0.08, 0.9); break;
+
+      // --- Revolver ---
+      case 'revolver:cylOpen': this.click(d, t, 2400, 0.02, 0.7); this.click(d, t + 0.03, 1200, 0.05, 0.6); break;
+      case 'revolver:eject': for (let i = 0; i < 6; i++) this.click(d, t + i * 0.035, 3200 + Math.random() * 1500, 0.04, 0.35); break;
+      case 'revolver:loader': this.click(d, t, 1500, 0.03, 0.5); this.click(d, t + 0.05, 900, 0.05, 0.6); this.click(d, t + 0.12, 2000, 0.02, 0.4); break;
+      case 'revolver:cylClose': this.click(d, t, 1800, 0.02, 0.9); this.click(d, t + 0.02, 650, 0.06, 1.0); this.tone(d, t, 'sine', 240, 110, 0.25, 0.06); break;
+
+      // --- RPG ---
+      case 'rpg:unlatch': this.click(d, t, 400, 0.08, 0.9); this.burst(d, t + 0.02, 0.15, 0.4, 'lowpass', 600, 0.4, 0.15); break;
+      case 'rpg:slideIn': this.slideNoise(d, t, 0.35, 700, 0.8); break;
+      case 'rpg:latch': this.click(d, t, 350, 0.1, 1.0); this.click(d, t + 0.09, 1400, 0.03, 0.6); break;
+
+      // --- Crossbow ---
+      case 'crossbow:draw': this.creak(d, t, 0.45); break;
+      case 'crossbow:latch': this.click(d, t, 2600, 0.02, 0.6); this.click(d, t + 0.02, 1100, 0.05, 0.7); break;
+      case 'crossbow:boltIn': this.slideNoise(d, t, 0.08, 3000, 0.4); this.click(d, t + 0.08, 1800, 0.03, 0.5); break;
+
+      // --- Melee ---
+      case 'melee:flourish': this.playMeleeSwing(); break;
+    }
+  }
+
+  // --- tiny synth helpers -----------------------------------------------------
+  private burst(dest: AudioNode, t: number, dur: number, rough: number, type: BiquadFilterType, freq: number, gain: number, decay: number, q: number = 1, endFreq?: number): void {
+    const src = this.ctx!.createBufferSource();
+    src.buffer = this.createGunpowderBuffer(dur, rough);
+    const f = this.ctx!.createBiquadFilter();
+    f.type = type;
+    f.frequency.setValueAtTime(freq, t);
+    if (endFreq) f.frequency.exponentialRampToValueAtTime(endFreq, t + decay);
+    f.Q.setValueAtTime(q, t);
+    const g = this.ctx!.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + decay);
+    src.connect(f); f.connect(g); g.connect(dest);
+    src.start(t);
+  }
+
+  private tone(dest: AudioNode, t: number, type: OscillatorType, f0: number, f1: number, gain: number, dur: number): void {
+    const o = this.ctx!.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t + dur);
+    const g = this.ctx!.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g); g.connect(dest);
+    o.start(t); o.stop(t + dur + 0.01);
+  }
+
+  /** Short metallic impact: resonant band-passed noise + a pitched ping. */
+  private click(dest: AudioNode, t: number, freq: number, dur: number, gain: number): void {
+    this.burst(dest, t, dur, 0.9, 'bandpass', freq, gain, dur, 6);
+    this.tone(dest, t, 'triangle', freq * 1.5, freq * 0.6, gain * 0.25, dur * 1.5);
+  }
+
+  /** Steel-on-steel sliding scrape. */
+  private slideNoise(dest: AudioNode, t: number, dur: number, freq: number, gain: number): void {
+    const src = this.ctx!.createBufferSource();
+    src.buffer = this.createGunpowderBuffer(dur, 0.7);
+    const f = this.ctx!.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.setValueAtTime(2.5, t);
+    f.frequency.setValueAtTime(freq * 0.7, t);
+    f.frequency.linearRampToValueAtTime(freq * 1.3, t + dur);
+    const g = this.ctx!.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(gain * 0.5, t + dur * 0.3);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f); f.connect(g); g.connect(dest);
+    src.start(t);
+  }
+
+  /** Bowstring / wood creak: slow, wobbling sawtooth under tension. */
+  private creak(dest: AudioNode, t: number, dur: number): void {
+    const o = this.ctx!.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.linearRampToValueAtTime(260, t + dur);
+    const lfo = this.ctx!.createOscillator();
+    lfo.frequency.setValueAtTime(28, t);
+    const lfoG = this.ctx!.createGain();
+    lfoG.gain.setValueAtTime(40, t);
+    lfo.connect(lfoG); lfoG.connect(o.frequency);
+    const f = this.ctx!.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(1200, t);
+    const g = this.ctx!.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.35, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(f); f.connect(g); g.connect(dest);
+    o.start(t); lfo.start(t); o.stop(t + dur); lfo.stop(t + dur);
+  }
+
   private getDestination(pos?: [number, number, number], isOccluded: boolean = false): AudioNode {
     if (!this.ctx) return this.sfxGain!;
     let currentDest: AudioNode = this.sfxGain!;

@@ -229,6 +229,11 @@ export class WeaponSystem {
   // State
   public isReloading: boolean = false;
   public reloadProgress: number = 0;
+  /** Reload stage callbacks (used by the audio layer): fired once per stage per reload. */
+  public onReloadStage: ((weapon: WeaponType, stage: string) => void) | null = null;
+  private firedReloadStages: Set<string> = new Set();
+  private reloadPartCache: Map<THREE.Group, Map<string, { obj: THREE.Object3D; pos: THREE.Vector3; rot: THREE.Euler; scale: THREE.Vector3 }[]>> = new Map();
+  private reloadPose = { pos: new THREE.Vector3(), rot: new THREE.Vector3() };
   public isADS: boolean = false;
   private lastFireTime: number = 0;
   public spreadCurrent: number = 0.003;
@@ -342,6 +347,8 @@ export class WeaponSystem {
     leftHand.position.set(-0.02, -0.02, -0.22);
     armGroupL.add(leftHand);
 
+    armGroupL.name = 'armLeft';
+    armGroupR.name = 'armRight';
     return { armLeft: armGroupL, armRight: armGroupR };
   }
 
@@ -387,6 +394,7 @@ export class WeaponSystem {
 
     // Curved Banana Magazine
     const akMag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.13), darkSteelMat);
+    akMag.name = 'mag';
     akMag.position.set(0, -0.14, -0.06);
     akMag.rotation.x = 0.26;
     akGroup.add(akMag);
@@ -438,6 +446,7 @@ export class WeaponSystem {
 
     // Giant Optical Scope Tube
     const awpScope = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 16), darkSteelMat);
+    awpScope.name = 'scope';
     awpScope.rotation.x = Math.PI / 2;
     awpScope.position.set(0, 0.15, -0.18);
     awpGroup.add(awpScope);
@@ -446,6 +455,16 @@ export class WeaponSystem {
     awpLens.rotation.x = Math.PI / 2;
     awpLens.position.set(0, 0.15, -0.38);
     awpGroup.add(awpLens);
+
+    const awpBolt = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.09, 8), darkSteelMat);
+    awpBolt.name = 'bolt';
+    awpBolt.rotation.z = Math.PI / 2;
+    awpBolt.position.set(0.07, 0.07, -0.05);
+    awpGroup.add(awpBolt);
+    const awpMag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.14), darkSteelMat);
+    awpMag.name = 'mag';
+    awpMag.position.set(0, -0.12, -0.12);
+    awpGroup.add(awpMag);
 
     const awpArms = this.createOperatorArms();
     awpGroup.add(awpArms.armLeft);
@@ -474,6 +493,7 @@ export class WeaponSystem {
 
     // Ribbed Pump Slide
     const spasPump = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.095, 0.22), darkSteelMat);
+    spasPump.name = 'pump';
     spasPump.position.set(0, 0.005, -0.42);
     spasGroup.add(spasPump);
 
@@ -495,6 +515,7 @@ export class WeaponSystem {
 
     // Slide
     const deagleSlide = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.08, 0.36), deagleSkinMat);
+    deagleSlide.name = 'slide';
     deagleSlide.position.set(0, 0.04, -0.15);
     deagleGroup.add(deagleSlide);
 
@@ -575,11 +596,13 @@ export class WeaponSystem {
       metalness: 0.2
     });
     const warheadCone = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.28, 16), warheadMat);
+    warheadCone.name = 'warhead';
     warheadCone.rotation.x = -Math.PI / 2;
     warheadCone.position.set(0, 0.05, -0.95);
     rpgGroup.add(warheadCone);
 
     const warheadBase = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.05, 0.14, 16), warheadMat);
+    warheadBase.name = 'warhead';
     warheadBase.rotation.x = Math.PI / 2;
     warheadBase.position.set(0, 0.05, -0.84);
     rpgGroup.add(warheadBase);
@@ -610,6 +633,7 @@ export class WeaponSystem {
 
     // Extended Stick Magazine
     const smgMag = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.28, 0.06), darkSteelMat);
+    smgMag.name = 'mag';
     smgMag.position.set(0, -0.14, 0.02);
     smgMag.rotation.x = -0.1;
     smgGroup.add(smgMag);
@@ -647,6 +671,7 @@ export class WeaponSystem {
 
     // Revolver Cylinder (Six-Shooter drum)
     const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.12, 12), darkSteelMat);
+    cylinder.name = 'cylinder';
     cylinder.rotation.x = Math.PI / 2;
     cylinder.position.set(0, 0.02, -0.05);
     revGroup.add(cylinder);
@@ -683,11 +708,13 @@ export class WeaponSystem {
 
     // Loaded High-Velocity Arrow Bolt
     const arrowShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.42, 8), darkSteelMat);
+    arrowShaft.name = 'bolt';
     arrowShaft.rotation.x = Math.PI / 2;
     arrowShaft.position.set(0, 0.05, -0.22);
     xbowGroup.add(arrowShaft);
 
     const arrowTip = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.06, 8), new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.2 }));
+    arrowTip.name = 'bolt';
     arrowTip.rotation.x = -Math.PI / 2;
     arrowTip.position.set(0, 0.05, -0.45);
     xbowGroup.add(arrowTip);
@@ -763,6 +790,7 @@ export class WeaponSystem {
     if (this.reserveAmmo[this.currentWeapon] <= 0) return false;
 
     this.isReloading = true;
+    this.firedReloadStages.clear();
     this.reloadProgress = 0;
     this.shotSequence = 0;
     return true;
@@ -787,7 +815,15 @@ export class WeaponSystem {
         this.reserveAmmo[this.currentWeapon] -= loaded;
         this.isReloading = false;
         this.reloadProgress = 0;
+        const mesh = this.weaponMeshes.get(this.currentWeapon);
+        if (mesh) this.resetReloadParts(mesh);
       }
+    }
+    this.reloadPose.pos.set(0, 0, 0);
+    this.reloadPose.rot.set(0, 0, 0);
+    if (this.isReloading) {
+      const mesh = this.weaponMeshes.get(this.currentWeapon);
+      if (mesh) this.applyReloadAnimation(mesh, Math.min(this.reloadProgress, 1));
     }
 
     // Dynamic Accuracy Spread
@@ -860,13 +896,297 @@ export class WeaponSystem {
       const meleeSwipeX = this.meleeSlashAnim * 0.2;
       const meleeSwipeRot = this.meleeSlashAnim * -0.8;
 
-      targetMesh.position.x = THREE.MathUtils.lerp(targetMesh.position.x, restPos.x + this.swayOffset.x + bobX - meleeSwipeX, dt * 18);
-      targetMesh.position.y = THREE.MathUtils.lerp(targetMesh.position.y, restPos.y + this.swayOffset.y - bobY + equipLift, dt * 18);
-      targetMesh.position.z = THREE.MathUtils.lerp(targetMesh.position.z, restPos.z + this.recoilOffset.z, dt * 18);
+      const rp = this.reloadPose;
+      targetMesh.position.x = THREE.MathUtils.lerp(targetMesh.position.x, restPos.x + this.swayOffset.x + bobX - meleeSwipeX + rp.pos.x, dt * 18);
+      targetMesh.position.y = THREE.MathUtils.lerp(targetMesh.position.y, restPos.y + this.swayOffset.y - bobY + equipLift + rp.pos.y, dt * 18);
+      targetMesh.position.z = THREE.MathUtils.lerp(targetMesh.position.z, restPos.z + this.recoilOffset.z + rp.pos.z, dt * 18);
 
-      targetMesh.rotation.x = this.recoilRot.x;
-      targetMesh.rotation.y = this.recoilRot.y + this.swayOffset.x * 0.25 + meleeSwipeRot;
-      targetMesh.rotation.z = isSliding ? -0.14 : 0; // Dynamic slide banking tilt!
+      targetMesh.rotation.x = THREE.MathUtils.lerp(targetMesh.rotation.x, this.recoilRot.x + rp.rot.x, dt * 20);
+      targetMesh.rotation.y = THREE.MathUtils.lerp(targetMesh.rotation.y, this.recoilRot.y + this.swayOffset.x * 0.25 + meleeSwipeRot + rp.rot.y, dt * 20);
+      targetMesh.rotation.z = THREE.MathUtils.lerp(targetMesh.rotation.z, (isSliding ? -0.14 : 0) + rp.rot.z, dt * 20); // Dynamic slide banking tilt!
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-weapon reload animations
+  // ---------------------------------------------------------------------------
+
+  private getReloadParts(group: THREE.Group): Map<string, { obj: THREE.Object3D; pos: THREE.Vector3; rot: THREE.Euler; scale: THREE.Vector3 }[]> {
+    let cache = this.reloadPartCache.get(group);
+    if (!cache) {
+      cache = new Map();
+      group.traverse((o) => {
+        if (!o.name || o === group) return;
+        const list = cache!.get(o.name) ?? [];
+        list.push({ obj: o, pos: o.position.clone(), rot: o.rotation.clone(), scale: o.scale.clone() });
+        cache!.set(o.name, list);
+      });
+      this.reloadPartCache.set(group, cache);
+    }
+    return cache;
+  }
+
+  private resetReloadParts(group: THREE.Group): void {
+    const cache = this.getReloadParts(group);
+    cache.forEach((list) => list.forEach((e) => {
+      e.obj.position.copy(e.pos);
+      e.obj.rotation.copy(e.rot);
+      e.obj.scale.copy(e.scale);
+      e.obj.visible = true;
+    }));
+  }
+
+  private stage(name: string, progress: number, at: number): void {
+    if (progress >= at && !this.firedReloadStages.has(name)) {
+      this.firedReloadStages.add(name);
+      this.onReloadStage?.(this.currentWeapon, name);
+    }
+  }
+
+  /** Smooth 0..1 ramp between a and b of progress. */
+  private static ramp(p: number, a: number, b: number): number {
+    const t = THREE.MathUtils.clamp((p - a) / Math.max(b - a, 1e-5), 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+
+  /** 0 -> 1 -> 0 pulse between a and b. */
+  private static pulse(p: number, a: number, b: number): number {
+    const t = THREE.MathUtils.clamp((p - a) / Math.max(b - a, 1e-5), 0, 1);
+    return Math.sin(t * Math.PI);
+  }
+
+  private applyReloadAnimation(group: THREE.Group, p: number): void {
+    const parts = this.getReloadParts(group);
+    this.resetReloadParts(group);
+    const R = WeaponSystem.ramp;
+    const P = WeaponSystem.pulse;
+    const pose = this.reloadPose;
+    const set = (name: string, fn: (o: THREE.Object3D, base: { pos: THREE.Vector3; rot: THREE.Euler }) => void) => {
+      parts.get(name)?.forEach((e) => fn(e.obj, e));
+    };
+    const offhand = (fn: (o: THREE.Object3D, base: { pos: THREE.Vector3; rot: THREE.Euler }) => void) => set('armLeft', fn);
+
+    switch (this.currentWeapon) {
+      case 'rifle': {
+        // Tilt weapon inward, drop magazine, slap in fresh one, rack charging handle.
+        const tilt = P(p, 0.0, 1.0);
+        pose.rot.z = -0.55 * tilt;
+        pose.rot.x = 0.22 * tilt;
+        pose.pos.y = -0.04 * tilt;
+        const out = R(p, 0.08, 0.3);
+        const back = R(p, 0.55, 0.78);
+        const magDrop = out * (1 - back);
+        set('mag', (o, b) => {
+          o.position.y = b.pos.y - magDrop * 0.38;
+          o.position.z = b.pos.z + magDrop * 0.08;
+          o.rotation.x = b.rot.x + magDrop * 0.6;
+          o.visible = !(out > 0.95 && back < 0.05);
+        });
+        offhand((o, b) => {
+          o.position.y = b.pos.y - magDrop * 0.3;
+          o.position.z = b.pos.z + magDrop * 0.1;
+        });
+        const slap = P(p, 0.74, 0.84);
+        pose.pos.y += -0.02 * slap;
+        const rack = P(p, 0.86, 1.0);
+        pose.pos.z += 0.05 * rack;
+        pose.rot.x += 0.12 * rack;
+        this.stage('magOut', p, 0.14);
+        this.stage('magIn', p, 0.76);
+        this.stage('bolt', p, 0.9);
+        break;
+      }
+      case 'smg': {
+        // Fast, snappy version with a sideways cant.
+        const tilt = P(p, 0.0, 1.0);
+        pose.rot.z = 0.45 * tilt;
+        pose.rot.y = -0.2 * tilt;
+        pose.pos.x = -0.03 * tilt;
+        const out = R(p, 0.05, 0.28);
+        const back = R(p, 0.5, 0.72);
+        const magDrop = out * (1 - back);
+        set('mag', (o, b) => {
+          o.position.y = b.pos.y - magDrop * 0.42;
+          o.rotation.x = b.rot.x + magDrop * 0.4;
+          o.visible = !(out > 0.95 && back < 0.05);
+        });
+        offhand((o, b) => { o.position.y = b.pos.y - magDrop * 0.34; });
+        const rack = P(p, 0.8, 1.0);
+        pose.pos.z += 0.04 * rack;
+        pose.rot.x += 0.1 * rack;
+        this.stage('magOut', p, 0.1);
+        this.stage('magIn', p, 0.7);
+        this.stage('bolt', p, 0.86);
+        break;
+      }
+      case 'pistol': {
+        // Slide locks back, mag drops, new mag, slide release.
+        const tilt = P(p, 0.0, 1.0);
+        pose.rot.z = -0.35 * tilt;
+        pose.rot.x = 0.3 * tilt;
+        pose.pos.y = -0.03 * tilt;
+        const slideLock = 1 - R(p, 0.86, 0.93);
+        set('slide', (o, b) => { o.position.z = b.pos.z + 0.07 * slideLock; });
+        const out = R(p, 0.1, 0.32);
+        const back = R(p, 0.5, 0.74);
+        const magDrop = out * (1 - back);
+        set('mag', (o, b) => {
+          o.position.y = b.pos.y - magDrop * 0.3;
+          o.visible = !(out > 0.95 && back < 0.05);
+        });
+        offhand((o, b) => { o.position.y = b.pos.y - magDrop * 0.25; o.position.x = b.pos.x + magDrop * 0.05; });
+        const snap = P(p, 0.86, 0.96);
+        pose.pos.z += 0.03 * snap;
+        this.stage('slideLock', p, 0.05);
+        this.stage('magOut', p, 0.16);
+        this.stage('magIn', p, 0.7);
+        this.stage('slideRelease', p, 0.88);
+        break;
+      }
+      case 'shotgun': {
+        // Shells thumbed into the tube one by one, then a pump to chamber.
+        const cant = P(p, 0.0, 1.0);
+        pose.rot.z = 0.5 * cant;
+        pose.rot.y = -0.25 * cant;
+        pose.pos.x = -0.05 * cant;
+        pose.pos.y = -0.03 * cant;
+        const shells = 4;
+        const loadStart = 0.1;
+        const loadEnd = 0.82;
+        const per = (loadEnd - loadStart) / shells;
+        let bump = 0;
+        for (let i = 0; i < shells; i++) {
+          const a = loadStart + per * i;
+          bump += P(p, a, a + per);
+          this.stage(`shell${i}`, p, a + per * 0.6);
+        }
+        offhand((o, b) => {
+          const t = (p - loadStart) / per;
+          const f = THREE.MathUtils.clamp(t, 0, shells) % 1;
+          const inLoad = p >= loadStart && p < loadEnd ? 1 : 0;
+          o.position.y = b.pos.y - 0.18 * inLoad * (1 - Math.abs(f * 2 - 1));
+          o.position.z = b.pos.z + 0.1 * inLoad * (1 - Math.abs(f * 2 - 1));
+        });
+        pose.pos.y += -0.012 * bump;
+        const pump = P(p, 0.86, 1.0);
+        set('pump', (o, b) => { o.position.z = b.pos.z + 0.11 * pump; });
+        pose.rot.x += 0.08 * pump;
+        this.stage('pump', p, 0.9);
+        break;
+      }
+      case 'railgun': {
+        // Bolt-action: lift & pull bolt, swap mag, drive bolt home.
+        const tilt = P(p, 0.0, 1.0);
+        pose.rot.z = -0.4 * tilt;
+        pose.rot.x = 0.15 * tilt;
+        pose.pos.x = 0.04 * tilt;
+        const boltOpen = R(p, 0.06, 0.22) * (1 - R(p, 0.84, 0.97));
+        set('bolt', (o, b) => {
+          o.rotation.x = b.rot.x - 1.2 * boltOpen;
+          o.position.z = b.pos.z + 0.1 * boltOpen;
+          o.position.y = b.pos.y + 0.03 * boltOpen;
+        });
+        const out = R(p, 0.3, 0.48);
+        const back = R(p, 0.6, 0.78);
+        const magDrop = out * (1 - back);
+        set('mag', (o, b) => {
+          o.position.y = b.pos.y - magDrop * 0.3;
+          o.rotation.x = b.rot.x + magDrop * 0.4;
+          o.visible = !(out > 0.95 && back < 0.05);
+        });
+        offhand((o, b) => {
+          const toBolt = P(p, 0.0, 0.3) + P(p, 0.8, 1.0);
+          o.position.y = b.pos.y + 0.1 * toBolt - magDrop * 0.28;
+          o.position.x = b.pos.x + 0.12 * toBolt;
+          o.position.z = b.pos.z + 0.25 * toBolt;
+        });
+        pose.pos.z += 0.03 * P(p, 0.84, 0.97);
+        this.stage('boltOpen', p, 0.1);
+        this.stage('magOut', p, 0.34);
+        this.stage('magIn', p, 0.74);
+        this.stage('boltClose', p, 0.9);
+        break;
+      }
+      case 'revolver': {
+        // Swing cylinder out, tip up and eject, speed-loader in, snap shut.
+        const tiltUp = R(p, 0.1, 0.3) * (1 - R(p, 0.42, 0.6));
+        const open = R(p, 0.05, 0.2) * (1 - R(p, 0.84, 0.95));
+        pose.rot.x = 0.9 * tiltUp - 0.5 * R(p, 0.42, 0.6) * (1 - R(p, 0.84, 0.95));
+        pose.rot.z = -0.6 * open;
+        pose.pos.y = 0.04 * tiltUp;
+        set('cylinder', (o, b) => {
+          o.position.x = b.pos.x - 0.07 * open;
+          o.rotation.z = b.rot.z + 0.9 * open;
+          o.rotation.y = b.rot.y + p * 12.0 * open; // spin while open
+        });
+        offhand((o, b) => {
+          const act = P(p, 0.2, 0.42) + P(p, 0.6, 0.84);
+          o.position.y = b.pos.y + 0.08 * act;
+          o.position.z = b.pos.z - 0.15 * act;
+          o.position.x = b.pos.x + 0.08 * act;
+        });
+        pose.pos.z += 0.02 * P(p, 0.84, 0.96);
+        this.stage('cylOpen', p, 0.1);
+        this.stage('eject', p, 0.3);
+        this.stage('loader', p, 0.72);
+        this.stage('cylClose', p, 0.88);
+        break;
+      }
+      case 'rpg': {
+        // Tube drops to hip, spent warhead removed, fresh warhead seated from the front.
+        const down = P(p, 0.0, 1.0);
+        pose.rot.x = -0.35 * down;
+        pose.rot.y = 0.5 * down;
+        pose.pos.y = -0.12 * down;
+        pose.pos.x = -0.06 * down;
+        const out = R(p, 0.1, 0.3);
+        const back = R(p, 0.5, 0.82);
+        set('warhead', (o, b) => {
+          const off = out * (1 - back);
+          o.position.z = b.pos.z - 0.6 * off;
+          o.visible = !(out > 0.95 && back < 0.05);
+        });
+        offhand((o, b) => {
+          const act = P(p, 0.1, 0.3) + P(p, 0.5, 0.86);
+          o.position.z = b.pos.z - 0.45 * act;
+          o.position.y = b.pos.y + 0.1 * act;
+        });
+        pose.pos.z += 0.04 * P(p, 0.82, 0.92);
+        this.stage('unlatch', p, 0.12);
+        this.stage('slideIn', p, 0.6);
+        this.stage('latch', p, 0.86);
+        break;
+      }
+      case 'crossbow': {
+        // Lower bow, foot-stirrup draw (string creak), latch, seat new bolt.
+        const low = P(p, 0.0, 1.0);
+        pose.rot.x = -0.6 * low;
+        pose.pos.y = -0.1 * low;
+        pose.pos.z = 0.05 * low;
+        const draw = R(p, 0.15, 0.5);
+        const boltIn = R(p, 0.68, 0.9);
+        set('bolt', (o, b) => {
+          o.visible = p > 0.6;
+          o.position.y = b.pos.y - 0.25 * (1 - boltIn);
+        });
+        set('armLeft', (o, b) => {
+          o.position.z = b.pos.z + 0.3 * draw * (1 - R(p, 0.5, 0.65)) - 0.1 * P(p, 0.65, 0.92);
+          o.position.y = b.pos.y - 0.06 * draw * (1 - R(p, 0.5, 0.65)) - 0.14 * P(p, 0.65, 0.92);
+        });
+        pose.rot.x += 0.12 * draw * (1 - R(p, 0.5, 0.62)); // strain as the string is drawn
+        this.stage('draw', p, 0.18);
+        this.stage('latch', p, 0.52);
+        this.stage('boltIn', p, 0.84);
+        break;
+      }
+      case 'melee': {
+        // Blade flourish.
+        const spin = P(p, 0, 1);
+        pose.rot.y = -1.2 * spin;
+        pose.rot.z = 0.8 * spin;
+        this.stage('flourish', p, 0.05);
+        break;
+      }
     }
   }
 }

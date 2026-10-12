@@ -172,6 +172,15 @@ export class CinematicPipeline {
     this.scene.environmentIntensity = 0.5;
   }
 
+  /** Toggle individual post effects per graphics preset. */
+  public setQuality(opts: { bloom: boolean; smaa: boolean; cinematic: boolean; bloomStrength?: number }): void {
+    this.bloom.enabled = opts.bloom;
+    if (opts.bloomStrength !== undefined) this.bloom.strength = opts.bloomStrength;
+    this.smaa.enabled = opts.smaa;
+    this.cinematic.enabled = opts.cinematic;
+    this.setSize(window.innerWidth, window.innerHeight);
+  }
+
   public setSize(w: number, h: number): void {
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
     this.composer.setSize(w, h);

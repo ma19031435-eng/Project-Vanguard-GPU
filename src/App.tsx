@@ -137,6 +137,9 @@ export default function App() {
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
     pipeline: CinematicPipeline;
+    sunLight: THREE.DirectionalLight;
+    particleBudget: number;
+    usePost: boolean;
     qualityManager: GraphicsQualityManager;
     wasmCore: WasmPhysicsCore;
     audioEngine: SpatialAudioEngine;
@@ -254,6 +257,7 @@ export default function App() {
   const handleSelectWeapon = useCallback((w: WeaponType) => {
     const engine = engineRef.current;
     if (!engine) return;
+    if (engine.weaponSystem.currentWeapon !== w) engine.audioEngine.playWeaponSwitch();
     engine.weaponSystem.switchWeapon(w);
     setCurrentWeapon(w);
   }, []);
@@ -472,6 +476,7 @@ export default function App() {
 
     // 8. Procedural Weapon System
     const weaponSystem = new WeaponSystem(camera);
+    weaponSystem.onReloadStage = (weapon, stage) => audioEngine.playReloadStage(weapon, stage);
 
     // 9. P2P Host-Authoritative Netcode Engine
     const p2pNet = new P2PNetworkEngine();
@@ -569,6 +574,9 @@ export default function App() {
       camera,
       renderer,
       pipeline,
+      sunLight,
+      particleBudget: 1,
+      usePost,
       qualityManager,
       wasmCore,
       audioEngine,
@@ -618,6 +626,9 @@ export default function App() {
       playerArmor: 100,
       isDead: false
     };
+
+    // Apply the initially selected graphics preset to the live renderer
+    applyPresetToEngine(currentPreset);
 
     p2pNet.onChatMessage = (sender, text) => {
       setChatMessages(prev => [...prev, { sender, text, time: Date.now() }]);
@@ -934,7 +945,7 @@ export default function App() {
       }
 
       (particleMat.uniforms.uTime as any).value = tSec;
-      if (usePost) engine.pipeline.render(dt, time);
+      if (usePost && engine.usePost) engine.pipeline.render(dt, time);
       else renderer.render(scene, camera);
 
       setPlayerPos([camera.position.x, camera.position.y, camera.position.z]);
@@ -1048,6 +1059,7 @@ export default function App() {
     } = engine;
 
     const totalAllocated = particleLifeArr.length;
+    count = Math.max(1, Math.round(count * engine.particleBudget));
 
     for (let i = 0; i < count; i++) {
       const idx = engine.particleNextIdx % totalAllocated;
@@ -1121,9 +1133,12 @@ export default function App() {
     if (def.id === 'rifle') engine.audioEngine.playAssaultRifle();
     else if (def.id === 'railgun') engine.audioEngine.playPlasmaRailgun();
     else if (def.id === 'shotgun') engine.audioEngine.playShotgun();
-    else if (def.id === 'pistol') engine.audioEngine.playAssaultRifle();
-    else if (def.id === 'melee') engine.audioEngine.playFootstep();
-    else if (def.id === 'rpg') engine.audioEngine.playExplosion([engine.camera.position.x, engine.camera.position.y, engine.camera.position.z]);
+    else if (def.id === 'pistol') engine.audioEngine.playPistol();
+    else if (def.id === 'smg') engine.audioEngine.playSMG();
+    else if (def.id === 'revolver') engine.audioEngine.playRevolver();
+    else if (def.id === 'crossbow') engine.audioEngine.playCrossbow();
+    else if (def.id === 'melee') engine.audioEngine.playMeleeSwing();
+    else if (def.id === 'rpg') engine.audioEngine.playRPGLaunch();
 
     // Heavy CS2 Recoil Pitch Punch (Kicks view up! Player pulls down mouse to spray control)
     engine.punchPitch += def.recoilKickPitch * 0.65;
@@ -1377,30 +1392,39 @@ export default function App() {
       } else if (e.code === 'KeyR' && !engine.isDead) {
         engine.weaponSystem.reload();
       } else if (e.code === 'Digit1' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'rifle') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('rifle');
         setCurrentWeapon('rifle');
       } else if (e.code === 'Digit2' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'railgun') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('railgun');
         setCurrentWeapon('railgun');
       } else if (e.code === 'Digit3' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'shotgun') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('shotgun');
         setCurrentWeapon('shotgun');
       } else if (e.code === 'Digit4' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'pistol') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('pistol');
         setCurrentWeapon('pistol');
       } else if (e.code === 'Digit5' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'melee') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('melee');
         setCurrentWeapon('melee');
       } else if (e.code === 'Digit6' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'rpg') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('rpg');
         setCurrentWeapon('rpg');
       } else if (e.code === 'Digit7' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'smg') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('smg');
         setCurrentWeapon('smg');
       } else if (e.code === 'Digit8' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'revolver') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('revolver');
         setCurrentWeapon('revolver');
       } else if (e.code === 'Digit9' && !engine.isDead) {
+        if (engine.weaponSystem.currentWeapon !== 'crossbow') engine.audioEngine.playWeaponSwitch();
         engine.weaponSystem.switchWeapon('crossbow');
         setCurrentWeapon('crossbow');
       } else if (e.code === 'KeyB' && !engine.isDead) {
@@ -1446,42 +1470,64 @@ export default function App() {
     };
   }, [mouseSens, fov, handleRespawn]);
 
-  const handleSendChat = (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+  const applyPresetToEngine = useCallback((preset: GraphicsPreset) => {
+    const engine = engineRef.current;
+    if (!engine) return null;
+    const conf = engine.qualityManager.applyConfiguration(preset);
+    const { renderer, sunLight, pipeline, scene } = engine;
 
-    if (trimmed.startsWith('/')) {
-      const [cmd, ...args] = trimmed.slice(1).split(' ');
-      if (cmd === 'bot') {
-        engineRef.current?.botSim.spawnInsaneBots(1);
-        setChatMessages(prev => [...prev, { sender: 'SYSTEM', text: 'Human Operator deployed to arena.', time: Date.now() }]);
-      } else if (cmd === 'xp') {
-        awardXp(500, 'TEST XP BONUS');
-      } else if (cmd === 'fps') {
-        setChatMessages(prev => [...prev, { sender: 'SYSTEM', text: `Engine FPS: ${fps} (${frameTimeMs.toFixed(1)}ms)`, time: Date.now() }]);
-      } else if (cmd === 'quality') {
-        const next = (args[0] as GraphicsPreset) || 'overdrive';
-        handleSelectPreset(next);
-      } else if (cmd === 'overdrive') {
-        handleSelectPreset('overdrive');
-      } else if (cmd === 'reset') {
-        handleRespawn();
-      } else {
-        setChatMessages(prev => [...prev, { sender: 'SYSTEM', text: 'Commands: /bot, /xp, /overdrive, /quality, /reset, /fps', time: Date.now() }]);
-      }
-      return;
+    // Resolution scale -> composer must follow the renderer's pixel ratio
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    pipeline.setSize(window.innerWidth, window.innerHeight);
+
+    // Shadow map resolution (re-allocate the depth target)
+    const maxTex = renderer.capabilities.maxTextureSize;
+    const shadowRes = Math.min(conf.shadowMapSize, maxTex);
+    if (sunLight.shadow.mapSize.width !== shadowRes) {
+      sunLight.shadow.mapSize.set(shadowRes, shadowRes);
+      sunLight.shadow.map?.dispose();
+      sunLight.shadow.map = null;
     }
+    sunLight.shadow.radius = conf.shadowSoftness === 'none' ? 1 : conf.shadowSoftness === 'pcf' ? 2 : 4;
+    sunLight.castShadow = true;
 
-    engineRef.current?.p2pNet.sendChatMessage(trimmed, 'COMMANDER');
-    setChatMessages(prev => [...prev, { sender: 'COMMANDER', text: trimmed, time: Date.now() }]);
-  };
+    // Post-processing stack: low = raw render, medium = AA + grade, high+ = bloom too
+    const tier = ['low', 'medium', 'high', 'ultra', 'overdrive'].indexOf(preset);
+    engine.usePost = tier >= 1;
+    pipeline.setQuality({
+      bloom: tier >= 2,
+      smaa: tier >= 1,
+      cinematic: tier >= 1,
+      bloomStrength: tier >= 3 ? 0.24 : 0.18,
+    });
+
+    // Image-based lighting & texture filtering
+    scene.environmentIntensity = tier === 0 ? 0.3 : tier === 1 ? 0.4 : 0.5;
+    const aniso = Math.min(conf.anisotropy, renderer.capabilities.getMaxAnisotropy());
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach((m) => {
+        const std = m as THREE.MeshStandardMaterial;
+        (['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'] as const).forEach((k) => {
+          const tex = std[k] as THREE.Texture | null | undefined;
+          if (tex && tex.anisotropy !== aniso) { tex.anisotropy = aniso; tex.needsUpdate = true; }
+        });
+      });
+      if (mesh.userData.castShadowBase === undefined) mesh.userData.castShadowBase = mesh.castShadow;
+      mesh.castShadow = tier === 0 ? false : mesh.userData.castShadowBase;
+    });
+
+    // Particle budget relative to the 250k "high" baseline
+    engine.particleBudget = THREE.MathUtils.clamp(conf.maxComputeParticles / 250000, 0.1, 2.0);
+    return conf;
+  }, []);
 
   const handleSelectPreset = (preset: GraphicsPreset) => {
     setCurrentPreset(preset);
-    if (engineRef.current) {
-      const conf = engineRef.current.qualityManager.applyConfiguration(preset);
-      setActiveParticles(conf.maxComputeParticles);
-    }
+    const conf = applyPresetToEngine(preset);
+    if (conf) setActiveParticles(conf.maxComputeParticles);
   };
 
   return (
@@ -1552,8 +1598,6 @@ export default function App() {
         isWebGPU={isWebGPU}
         isHost={isHostSession}
         roomId={roomCode}
-        onSendChat={handleSendChat}
-        chatMessages={chatMessages}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenLobby={() => setLobbyOpen(true)}
         currentSpeed={currentSpeed}
