@@ -57,22 +57,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onAutoPreset,
   hardware,
 }) => {
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.code === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hud-font select-none">
-      <div className="bg-zinc-950 border border-cyan-500/40 rounded-2xl w-full max-w-xl p-6 shadow-2xl text-zinc-200">
-        <div className="flex justify-between items-center pb-3 border-b border-zinc-800 mb-6">
-          <div className="flex items-center gap-2 text-cyan-400 font-bold text-lg">
-            <Sliders className="w-5 h-5 text-cyan-400" /> VANGUARD SYSTEM CONFIGURATION
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 hud-font select-none" onClick={onClose}>
+      <div
+        className="bg-zinc-950 border border-cyan-500/40 rounded-2xl w-full max-w-xl shadow-2xl text-zinc-200 flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh]"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
+        {/* Sticky header — always reachable close button */}
+        <div className="flex justify-between items-center px-4 sm:px-6 py-3 border-b border-zinc-800 shrink-0">
+          <div className="flex items-center gap-2 text-cyan-400 font-bold text-base sm:text-lg">
+            <Sliders className="w-5 h-5 text-cyan-400" /> SETTINGS
           </div>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition"
+            aria-label="Close settings"
+            className="p-2 -mr-2 hover:bg-zinc-800 active:bg-zinc-700 rounded-lg text-zinc-300 hover:text-white transition pointer-events-auto"
           >
-            <X className="w-5 h-5" />
+            <X className="w-6 h-6" />
           </button>
         </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-4" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
 
         {/* Bot Combat Difficulty (Nerf tuning) */}
         <div className="mb-6 bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
@@ -183,7 +199,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Input & Field of View */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <div className="bg-zinc-900/60 border border-zinc-800 p-3 rounded-xl">
             <div className="flex justify-between items-center mb-2 text-xs">
               <span className="text-zinc-300 font-bold">MOUSE SENSITIVITY</span>
@@ -278,12 +294,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
-        <div className="flex justify-end">
+        </div>
+
+        {/* Sticky footer */}
+        <div className="shrink-0 px-4 sm:px-6 py-3 border-t border-zinc-800 flex justify-end bg-zinc-950 rounded-b-2xl" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
           <button
             onClick={onClose}
-            className="py-2 px-6 bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs rounded-xl transition shadow-[0_0_15px_rgba(0,229,255,0.4)]"
+            className="w-full sm:w-auto py-3 sm:py-2 px-6 bg-cyan-500 hover:bg-cyan-400 active:bg-cyan-300 text-black font-bold text-xs rounded-xl transition shadow-[0_0_15px_rgba(0,229,255,0.4)]"
           >
-            CONFIRM & RETURN TO COMBAT
+            DONE
           </button>
         </div>
       </div>

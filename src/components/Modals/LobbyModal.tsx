@@ -38,11 +38,11 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ isOpen, onClose, roomId,
   const statusColor = networkStatus === 'connected' ? 'text-emerald-400' : networkStatus === 'connecting' ? 'text-amber-400' : networkStatus === 'idle' ? 'text-zinc-500' : 'text-red-400';
   const quickPlay = () => { setSearching(true); onHostNewRoom(); setTimeout(() => setSearching(false), 1800); };
 
-  return <div className="fixed inset-0 z-50 bg-[#05070c]/95 backdrop-blur-xl flex items-center justify-center p-3 hud-font select-none">
-    <div className="bg-[#090d15] border border-cyan-400/30 rounded-2xl w-full max-w-5xl max-h-[94vh] overflow-hidden shadow-[0_0_80px_rgba(6,182,212,.16)] text-zinc-200">
-      <header className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-gradient-to-r from-cyan-950/40 to-transparent">
+  return <div className="fixed inset-0 z-50 bg-[#05070c]/95 backdrop-blur-xl flex items-center justify-center p-2 sm:p-3 hud-font select-none">
+    <div className="bg-[#090d15] border border-cyan-400/30 rounded-2xl w-full max-w-5xl max-h-[calc(100dvh-1rem)] sm:max-h-[94dvh] overflow-hidden flex flex-col shadow-[0_0_80px_rgba(6,182,212,.16)] text-zinc-200">
+      <header className="shrink-0 flex justify-between items-center px-4 sm:px-6 py-3 sm:py-4 border-b border-white/10 bg-gradient-to-r from-cyan-950/40 to-transparent">
         <div><div className="flex items-center gap-2 text-cyan-300 font-black text-xl tracking-widest"><Globe className="w-5 h-5"/> VANGUARD NETWORK</div><div className="text-[10px] text-zinc-500 mt-1">P2P PREVIEW • DEDICATED MATCHMAKING INFRASTRUCTURE COMING LATER</div></div>
-        <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg"><X className="w-5 h-5"/></button>
+        <button onClick={onClose} aria-label="Close" className="p-2 hover:bg-white/10 active:bg-white/20 rounded-lg"><X className="w-6 h-6"/></button>
       </header>
 
       <div className="flex border-b border-white/10 px-6">
@@ -50,7 +50,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ isOpen, onClose, roomId,
         <button onClick={()=>setTab('custom')} className={`px-5 py-3 text-xs font-black border-b-2 ${tab==='custom'?'text-cyan-300 border-cyan-400':'text-zinc-500 border-transparent'}`}>CUSTOM P2P</button>
       </div>
 
-      <main className="p-6 overflow-y-auto max-h-[72vh]">
+      <main className="p-4 sm:p-6 overflow-y-auto overscroll-contain flex-1 min-h-0" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
       {tab === 'play' ? <>
         <div className="flex items-center justify-between mb-3"><div><h2 className="font-black tracking-wider">SELECT ARENA</h2><p className="text-[10px] text-zinc-500">Six original combat spaces designed for slides, air-strafes and vertical routes.</p></div><Map className="text-cyan-500"/></div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">{MAPS.map(m=><button key={m.id} onClick={()=>setSelectedMap(m.id)} className={`relative text-left rounded-xl overflow-hidden border-2 transition ${selectedMap===m.id?'border-cyan-300 shadow-[0_0_18px_rgba(34,211,238,.3)]':'border-white/10 hover:border-white/30'}`}>

@@ -41,8 +41,8 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const triggerUpdate = () => setRefreshKey(k => k + 1);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 hud-font select-none">
-      <div className="bg-zinc-950 border-2 border-amber-500/50 rounded-2xl w-full max-w-3xl p-6 shadow-[0_0_50px_rgba(245,158,11,0.25)] text-zinc-200 flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 hud-font select-none">
+      <div className="bg-zinc-950 border-2 border-amber-500/50 rounded-2xl w-full max-w-3xl p-4 sm:p-6 shadow-[0_0_50px_rgba(245,158,11,0.25)] text-zinc-200 flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90dvh]">
         {/* Header */}
         <div className="flex justify-between items-center pb-4 border-b border-zinc-800 shrink-0">
           <div className="flex items-center gap-3">
@@ -114,7 +114,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
         </div>
 
         {/* Content Container */}
-        <div className="flex-1 overflow-y-auto pr-1 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 space-y-4" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
           {/* TAB 1: WEAPON SKINS */}
           {activeTab === 'skins' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
