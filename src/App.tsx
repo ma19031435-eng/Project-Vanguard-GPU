@@ -68,6 +68,8 @@ export default function App() {
   // Session flow: players spawn in the lobby and pick a deployment.
   const [sessionMode, setSessionMode] = useState<SessionMode | null>(null);
   const sessionModeRef = useRef<SessionMode | null>(null);
+  const fireHeldRef = useRef(false);
+  const handleFireRef = useRef<() => void>(() => {});
   sessionModeRef.current = sessionMode;
 
   // Modal & Engine State
@@ -808,6 +810,12 @@ export default function App() {
 
       // 15. Update Weapons & Viewmodel
       engine.weaponSystem.update(dt, engine.mouseDeltaX, engine.mouseDeltaY, horizSpeed);
+
+      // Hold-to-spray for automatic weapons (fire() enforces the per-weapon RPM cadence)
+      if (fireHeldRef.current && !engine.isDead && document.pointerLockElement === canvasRef.current) {
+        const heldDef = WEAPON_DEFINITIONS[engine.weaponSystem.currentWeapon];
+        if (heldDef.isAutomatic && engine.weaponSystem.canFire()) handleFireRef.current();
+      }
       engine.mouseDeltaX = 0;
       engine.mouseDeltaY = 0;
 
@@ -1331,6 +1339,7 @@ export default function App() {
       const locked = document.pointerLockElement === canvasRef.current;
       setIsPointerLocked(locked);
       if (!locked) {
+        fireHeldRef.current = false;
         lastPointerLockExit.current = Date.now();
       }
     };
@@ -1353,6 +1362,7 @@ export default function App() {
       if (document.pointerLockElement !== canvasRef.current) return;
       if (!sessionModeRef.current) return;
       if (e.button === 0) {
+        fireHeldRef.current = true;
         handleFire();
       } else if (e.button === 2) {
         e.preventDefault();
@@ -1367,6 +1377,7 @@ export default function App() {
     };
 
     const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 0) fireHeldRef.current = false;
       if (e.button === 2) {
         const engine = engineRef.current;
         if (engine) {
@@ -1469,6 +1480,8 @@ export default function App() {
       window.removeEventListener('contextmenu', handleContextMenu);
     };
   }, [mouseSens, fov, handleRespawn]);
+
+  handleFireRef.current = handleFire;
 
   const applyPresetToEngine = useCallback((preset: GraphicsPreset) => {
     const engine = engineRef.current;

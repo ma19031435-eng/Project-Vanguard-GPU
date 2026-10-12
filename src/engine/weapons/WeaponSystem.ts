@@ -27,11 +27,14 @@ export interface WeaponDef {
   color: string;
   isMelee?: boolean;
   isExplosive?: boolean;
+  /** Fully automatic: holding the trigger keeps firing at fireRateRpm. */
+  isAutomatic?: boolean;
 }
 
 export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   rifle: {
     id: 'rifle',
+    isAutomatic: true,
     name: 'AK-47 Tactical',
     category: 'Assault Rifle (1-Tap Lethal)',
     damage: 36,
@@ -68,6 +71,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   smg: {
     id: 'smg',
+    isAutomatic: true,
     name: 'SMG (Run N Gun)',
     category: 'Submachine Gun (Rapid Spray)',
     damage: 22,
@@ -158,6 +162,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDef> = {
   },
   melee: {
     id: 'melee',
+    isAutomatic: true,
     name: 'Cyber Katana',
     category: 'Tactical Melee Edge',
     damage: 85,
