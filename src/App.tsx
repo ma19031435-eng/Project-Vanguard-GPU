@@ -1153,6 +1153,8 @@ export default function App() {
 
           engine.audioEngine.playGunshot(bot.state.currentWeapon, rayOrigin);
           engine.botSim.registerSound(rayOrigin, 'gunfire');
+          const shooterSkel = engine.remoteSkeletons.get(bot.state.id);
+          if (shooterSkel) shooterSkel.fireKick = 1;
           spawnBulletTracer(rayOrigin, rayDir, 75, '#ff4433');
 
           const hit = engine.wasmCore.raycastTarget(

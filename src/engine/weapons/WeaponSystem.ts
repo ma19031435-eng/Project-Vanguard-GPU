@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { WeaponPartAnimator } from './WeaponPartAnimator.ts';
 import { WeaponSkinId, SHOP_SKINS } from '../shop/ShopSystem.ts';
 
 export type WeaponType =
@@ -530,6 +531,7 @@ export class WeaponSystem {
   public muzzleLight: THREE.PointLight;
   private muzzleFlashTimer: number = 0;
   private activeSkinMaterials: THREE.MeshStandardMaterial[] = [];
+  private partAnimator: WeaponPartAnimator;
 
   constructor(camera: THREE.Camera) {
     this.camera = camera;
@@ -542,6 +544,7 @@ export class WeaponSystem {
     this.muzzleLight.position.set(0.24, -0.15, -0.85);
     this.viewmodelRoot.add(this.muzzleLight);
 
+    this.partAnimator = new WeaponPartAnimator(this.viewmodelRoot);
     this.buildIndieBlockyWeapons();
     this.switchWeapon('rifle');
   }
@@ -620,7 +623,16 @@ export class WeaponSystem {
       const handMesh = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.07, 0.1), gloveMat);
       handMesh.position.copy(hand);
       handMesh.lookAt(elbow);
+      handMesh.name = 'hand';
       g.add(handMesh);
+      if (side === 'right') {
+        // Index finger: rests along the frame, curls onto the trigger when firing
+        const finger = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.016, 0.055), gloveMat);
+        finger.position.set(hand.x - 0.004, hand.y + 0.012, hand.z - 0.07);
+        finger.rotation.x = 0.2;
+        finger.name = 'finger';
+        g.add(finger);
+      }
       // Wrist cuff -> forearm -> upper arm
       const wrist = hand.clone().lerp(elbow, 0.12);
       g.add(segment(wrist, elbow, 0.085, 0.085, sleeveMat));
@@ -698,6 +710,7 @@ export class WeaponSystem {
 
     const akMuzzle = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.08), darkSteelMat);
     akMuzzle.position.set(0, 0.03, -0.88);
+    akMuzzle.name = 'muzzle';
     akGroup.add(akMuzzle);
 
     // Front & Rear Sights
@@ -733,6 +746,7 @@ export class WeaponSystem {
 
     const awpMuzzleBrake = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.06, 0.14), darkSteelMat);
     awpMuzzleBrake.position.set(0, 0.04, -1.35);
+    awpMuzzleBrake.name = 'muzzle';
     awpGroup.add(awpMuzzleBrake);
 
     // Giant Optical Scope Tube
@@ -859,6 +873,7 @@ export class WeaponSystem {
       spine.position.set(0, 0.005, -segLen / 2);
       seg.add(spine);
       const edge = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.022, segLen + 0.01), bladeMat);
+      edge.name = 'edge';
       edge.position.set(0, -0.016, -segLen / 2);
       seg.add(edge);
       katanaGroup.add(seg);
@@ -1050,6 +1065,7 @@ export class WeaponSystem {
     // Horizontal Bow Limbs
     const bowLimbs = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.04, 0.04), darkSteelMat);
     bowLimbs.position.set(0, 0.02, -0.32);
+    bowLimbs.name = 'limb';
     xbowGroup.add(bowLimbs);
 
     // Loaded High-Velocity Arrow Bolt
@@ -1193,7 +1209,7 @@ export class WeaponSystem {
       const g = new THREE.Group();
       const headMat = steelBaseMat.clone(); headMat.color.setHex(0x55595f); headMat.roughness = 0.5; this.activeSkinMaterials.push(headMat);
       const haft = cyl(0.02, 0.9, woodMat, 0, 0.0, -0.2); g.add(haft);
-      g.add(box(0.12, 0.12, 0.22, headMat, 0, 0.0, -0.62));
+      g.add(box(0.12, 0.12, 0.22, headMat, 0, 0.0, -0.62, 'head'));
       g.add(box(0.13, 0.13, 0.03, darkSteelMat, 0, 0.0, -0.74));
       g.add(box(0.13, 0.13, 0.03, darkSteelMat, 0, 0.0, -0.5));
       g.add(cyl(0.028, 0.14, darkSteelMat, 0, 0.0, 0.18)); // grip wrap
@@ -1217,6 +1233,10 @@ export class WeaponSystem {
       g.userData.baseRot = new THREE.Euler(0.1, -0.5, 0.2);
       finish(g, 'knife', [0.2, -0.22, -0.4]);
     }
+
+    // Living details on every weapon: triggers, hammers, chargers, ports, slings, belts, strings
+    this.weaponMeshes.forEach((group, id) => this.partAnimator.attachDetails(group, id, darkSteelMat));
+    this.reloadPartCache.clear();
   }
 
   public switchWeapon(type: WeaponType): void {
@@ -1263,6 +1283,8 @@ export class WeaponSystem {
     this.recoilRoll += feel.kickRoll * (this.shotSequence % 2 === 0 ? 1 : -0.6);
     this.sinceShot = 0;
     this.altHand ^= 1;
+    const fireMesh = this.weaponMeshes.get(this.currentWeapon);
+    if (fireMesh) this.partAnimator.onFire(this.currentWeapon, fireMesh, this.altHand, feel.action, feel.actionDelay, feel.actionDur);
 
     if (isMeleeWeapon(this.currentWeapon)) {
       this.meleeSlashAnim = 1.0;
@@ -1468,6 +1490,31 @@ export class WeaponSystem {
       targetMesh.rotation.x = THREE.MathUtils.lerp(targetMesh.rotation.x, bx + this.recoilRot.x + meleeRX + rp.rot.x, dt * (follow + 2));
       targetMesh.rotation.y = THREE.MathUtils.lerp(targetMesh.rotation.y, by + this.recoilRot.y + this.swayOffset.x * (0.25 + heavy * 0.3) + meleeRY + rp.rot.y, dt * (follow + 2));
       targetMesh.rotation.z = THREE.MathUtils.lerp(targetMesh.rotation.z, bz + (isSliding ? -0.14 : 0) + this.recoilRoll + this.swayOffset.x * -0.6 + meleeRZ + rp.rot.z, dt * (follow + 2));
+
+      // Additive life on every part (runs after reload / action so it stacks on top)
+      this.partAnimator.update({
+        dt,
+        weapon: this.currentWeapon,
+        group: targetMesh,
+        parts: this.getReloadParts(targetMesh),
+        sinceShot: this.sinceShot,
+        fireInterval: 60 / def.fireRateRpm,
+        isAuto: !!def.isAutomatic,
+        isTriggerHeld: this.sinceShot < 60 / def.fireRateRpm + 0.05,
+        isReloading: this.isReloading,
+        ammo: this.ammoInMag[this.currentWeapon],
+        speed: horizontalSpeed,
+        bobTime: this.bobTime,
+        idleTime: this.idleTime,
+        mouseDX: mouseDeltaX,
+        mouseDY: mouseDeltaY,
+        recoilZ: this.recoilOffset.z,
+        meleeSlash: this.meleeSlashAnim,
+        altHand: this.altHand,
+        actionDelay: feel.actionDelay,
+        actionDur: feel.actionDur,
+        action: feel.action,
+      });
     }
   }
 
@@ -1567,6 +1614,8 @@ export class WeaponSystem {
     if (progress >= at && !this.firedReloadStages.has(name)) {
       this.firedReloadStages.add(name);
       this.onReloadStage?.(this.currentWeapon, name);
+      const g = this.weaponMeshes.get(this.currentWeapon);
+      if (g) this.partAnimator.onReloadStage(this.currentWeapon, g, name);
     }
   }
 

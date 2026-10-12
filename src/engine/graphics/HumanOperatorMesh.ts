@@ -29,6 +29,11 @@ export interface HumanSkeleton {
   animTime: number;
   isDead: boolean;
   deathTime: number;
+  /** Set to 1 when this operator fires; decays and drives the weapon kick / shoulder shove. */
+  fireKick: number;
+  /** Smoothed body lean state (forward, side) and previous velocity for acceleration cues. */
+  lean: THREE.Vector2;
+  prevVel: THREE.Vector3;
 }
 
 export class HumanOperatorBuilder {
@@ -344,9 +349,12 @@ export class HumanOperatorBuilder {
       shinL,
       legR,
       shinR,
-      animTime: 0,
+      animTime: Math.random() * Math.PI * 2,
       isDead: false,
-      deathTime: 0
+      deathTime: 0,
+      fireKick: 0,
+      lean: new THREE.Vector2(),
+      prevVel: new THREE.Vector3()
     };
   }
 
@@ -398,16 +406,30 @@ export class HumanOperatorBuilder {
       }
       skel.deathTime += dt;
 
-      // Realistic CS2 Elimination Ragdoll Collapse (falls backwards to ground)
+      // Elimination: knees buckle first, then the torso folds back, arms go slack, weapon drops
       const t = Math.min(skel.deathTime * 3.5, 1.0);
-      skel.pelvis.position.y = THREE.MathUtils.lerp(0.9, 0.18, t);
-      skel.pelvis.position.z = THREE.MathUtils.lerp(0, -0.5, t);
-      skel.pelvis.rotation.x = THREE.MathUtils.lerp(0, -Math.PI / 2.1, t);
-      skel.head.rotation.x = THREE.MathUtils.lerp(0, 0.6, t);
-      skel.armL.rotation.z = THREE.MathUtils.lerp(0.2, 0.8, t);
-      skel.armR.rotation.z = THREE.MathUtils.lerp(-0.1, -0.7, t);
-      skel.legL.rotation.x = THREE.MathUtils.lerp(0, 0.3, t);
-      skel.legR.rotation.x = THREE.MathUtils.lerp(0, 0.2, t);
+      const e = t * t * (3 - 2 * t);
+      const settle = Math.exp(-skel.deathTime * 6) * Math.sin(skel.deathTime * 28) * (1 - e) * 0.08;
+      skel.pelvis.position.y = THREE.MathUtils.lerp(0.9, 0.18, e);
+      skel.pelvis.position.z = THREE.MathUtils.lerp(0, -0.5, e);
+      skel.pelvis.rotation.x = THREE.MathUtils.lerp(0, -Math.PI / 2.1, e) + settle;
+      skel.pelvis.rotation.y = THREE.MathUtils.lerp(skel.pelvis.rotation.y, 0.25, dt * 4);
+      skel.torso.rotation.x = THREE.MathUtils.lerp(skel.torso.rotation.x, 0.15, dt * 6);
+      skel.head.rotation.x = THREE.MathUtils.lerp(0, 0.6, e);
+      skel.head.rotation.z = THREE.MathUtils.lerp(skel.head.rotation.z, 0.35, dt * 3);
+      skel.armL.rotation.x = THREE.MathUtils.lerp(skel.armL.rotation.x, -0.4, dt * 5);
+      skel.armL.rotation.z = THREE.MathUtils.lerp(0.2, 1.1, e);
+      skel.armR.rotation.x = THREE.MathUtils.lerp(skel.armR.rotation.x, 0.2, dt * 5);
+      skel.armR.rotation.z = THREE.MathUtils.lerp(-0.1, -0.9, e);
+      skel.forearmL.rotation.x = THREE.MathUtils.lerp(skel.forearmL.rotation.x, 0.3, dt * 5);
+      skel.forearmR.rotation.x = THREE.MathUtils.lerp(skel.forearmR.rotation.x, 0.2, dt * 5);
+      const buckle = Math.min(skel.deathTime * 7, 1);
+      skel.legL.rotation.x = THREE.MathUtils.lerp(0, 0.3, e) - 0.5 * buckle * (1 - e);
+      skel.legR.rotation.x = THREE.MathUtils.lerp(0, 0.2, e) - 0.6 * buckle * (1 - e);
+      skel.shinL.rotation.x = 1.1 * buckle * (1 - e * 0.6);
+      skel.shinR.rotation.x = 0.9 * buckle * (1 - e * 0.6);
+      skel.weaponProp.rotation.x = THREE.MathUtils.lerp(skel.weaponProp.rotation.x, 0.9, dt * 4);
+      skel.weaponProp.rotation.z = THREE.MathUtils.lerp(skel.weaponProp.rotation.z, 0.6, dt * 4);
       return;
     }
 
@@ -415,57 +437,97 @@ export class HumanOperatorBuilder {
     skel.isDead = false;
     const speed = Math.hypot(velocity.x, velocity.z);
     const isMoving = speed > 0.4;
+    skel.fireKick = Math.max(0, skel.fireKick - dt * 10);
+    const kick = skel.fireKick;
 
     if (isMoving) {
       skel.animTime += dt * (speed * 2.2);
     } else {
       skel.animTime += dt * 2.0; // Idle breathing
     }
-
     const t = skel.animTime;
+    const moveBlend = THREE.MathUtils.clamp((speed - 0.4) / 2.0, 0, 1);
+
+    // Velocity in the body's own frame: +fwd is where the operator faces, +side is to their right
+    const yaw = skel.root.rotation.y;
+    const fwd = -velocity.x * Math.sin(yaw) - velocity.z * Math.cos(yaw);
+    const side = velocity.x * Math.cos(yaw) - velocity.z * Math.sin(yaw);
+    // Acceleration cue: lean harder when starting / stopping
+    const accF = (fwd - (-skel.prevVel.x * Math.sin(yaw) - skel.prevVel.z * Math.cos(yaw))) / Math.max(dt, 1e-3);
+    skel.prevVel.copy(velocity);
+    const targetLeanF = THREE.MathUtils.clamp(fwd * 0.045 + accF * 0.004, -0.25, 0.3);
+    const targetLeanS = THREE.MathUtils.clamp(-side * 0.04, -0.2, 0.2);
+    skel.lean.x = THREE.MathUtils.damp(skel.lean.x, targetLeanF, 6, dt);
+    skel.lean.y = THREE.MathUtils.damp(skel.lean.y, targetLeanS, 6, dt);
 
     // 1. Crouch vs Stand Height
     const targetHipY = isCrouching ? 0.62 : 0.9;
-    skel.pelvis.position.y = THREE.MathUtils.lerp(skel.pelvis.position.y, targetHipY, dt * 10);
+    const bounce = Math.abs(Math.sin(t * 2)) * 0.04 * moveBlend;
+    skel.pelvis.position.y = THREE.MathUtils.lerp(skel.pelvis.position.y, targetHipY + bounce, dt * 10);
     skel.pelvis.position.z = 0;
-    skel.pelvis.rotation.x = isCrouching ? 0.2 : 0;
+    skel.pelvis.rotation.x = (isCrouching ? 0.2 : 0) + skel.lean.x * 0.5;
+    skel.pelvis.rotation.z = skel.lean.y * 0.4;
+    skel.pelvis.rotation.y = THREE.MathUtils.lerp(skel.pelvis.rotation.y, Math.sin(t) * 0.08 * moveBlend, dt * 8);
 
-    // 2. Aim Pitch Tracking (Torso and head tilt up/down)
-    skel.torso.rotation.x = -aimPitch * 0.5;
-    skel.head.rotation.x = -aimPitch * 0.5;
+    // 2. Torso: aim pitch, lean, breathing, counter-rotation against the hips, recoil shove
+    skel.torso.rotation.x = -aimPitch * 0.5 + skel.lean.x * 0.6 + 0.08 * kick;
+    skel.torso.rotation.y = -Math.sin(t) * 0.06 * moveBlend;
+    skel.torso.rotation.z = skel.lean.y * 0.5;
+    skel.torso.position.y = 0.22 + Math.sin(t * (isMoving ? 0.5 : 1)) * 0.006;
+    skel.vest.rotation.copy(skel.torso.rotation);
+    skel.vest.position.y = 0.2 + Math.sin(t * 2 + 0.6) * 0.004 * moveBlend;
 
-    // 3. Stride Run Cycles (Leg swings and knee flexion)
+    // 3. Head: holds the horizon while the body leans, bobs slightly out of phase, flinches on fire
+    skel.head.rotation.x = -aimPitch * 0.5 - skel.lean.x * 0.4 + 0.05 * kick;
+    skel.head.rotation.y = Math.sin(t * 0.5 + 1.3) * 0.03 * moveBlend;
+    skel.head.rotation.z = -skel.lean.y * 0.6 + Math.sin(t) * 0.02 * moveBlend;
+    skel.hatGroup.rotation.x = Math.sin(t * 2) * 0.012 * moveBlend;
+    skel.goggles.position.y = 0.02 + Math.sin(t * 2 + 0.3) * 0.002 * moveBlend;
+
+    // 4. Gear jiggle: pouches lag the bounce, with a tiny per-pouch phase offset
+    for (let i = 0; i < skel.pouches.length; i++) {
+      const ph = t * 2 + i * 0.7;
+      skel.pouches[i].rotation.x = Math.sin(ph) * 0.07 * moveBlend + 0.04 * kick;
+      skel.pouches[i].position.z = 0.16 + Math.sin(ph) * 0.005 * moveBlend;
+    }
+
+    // 5. Legs: stride with knee flexion, heel plant; idle stance drifts in
     if (isMoving) {
       const legStride = Math.sin(t) * 0.65;
       skel.legL.rotation.x = legStride;
       skel.shinL.rotation.x = legStride < 0 ? -legStride * 0.8 : 0;
-
       skel.legR.rotation.x = -legStride;
       skel.shinR.rotation.x = -legStride < 0 ? legStride * 0.8 : 0;
-
-      // Pelvis bobbing & spine bounce
-      skel.pelvis.position.y = targetHipY + Math.abs(Math.sin(t * 2)) * 0.04;
-      skel.pelvis.rotation.y = Math.sin(t) * 0.08;
+      skel.legL.rotation.z = 0.04 * moveBlend;
+      skel.legR.rotation.z = -0.04 * moveBlend;
     } else {
-      // Idle tactical stance
-      skel.legL.rotation.x = THREE.MathUtils.lerp(skel.legL.rotation.x, 0.08, dt * 8);
+      // Idle tactical stance with slow weight shifts
+      const shift = Math.sin(t * 0.35) * 0.03;
+      skel.legL.rotation.x = THREE.MathUtils.lerp(skel.legL.rotation.x, 0.08 + shift, dt * 8);
       skel.shinL.rotation.x = THREE.MathUtils.lerp(skel.shinL.rotation.x, 0, dt * 8);
-      skel.legR.rotation.x = THREE.MathUtils.lerp(skel.legR.rotation.x, -0.08, dt * 8);
+      skel.legR.rotation.x = THREE.MathUtils.lerp(skel.legR.rotation.x, -0.08 - shift, dt * 8);
       skel.shinR.rotation.x = THREE.MathUtils.lerp(skel.shinR.rotation.x, 0, dt * 8);
-      skel.pelvis.rotation.y = THREE.MathUtils.lerp(skel.pelvis.rotation.y, 0, dt * 8);
-
-      // Subtle breathing motion
-      skel.torso.position.y = 0.22 + Math.sin(t) * 0.006;
+      skel.legL.rotation.z = THREE.MathUtils.lerp(skel.legL.rotation.z, 0.02, dt * 8);
+      skel.legR.rotation.z = THREE.MathUtils.lerp(skel.legR.rotation.z, -0.02, dt * 8);
     }
 
-    // 4. Two-Handed Rifle Holding with Subtle Recoil/Sway
+    // 6. Arms: two-handed carry, with a sprint pump that fights the leg cycle, and a shoulder shove on fire
     const breatheSway = Math.sin(t * 0.8) * 0.02;
-    skel.armR.rotation.x = 0.65 - aimPitch * 0.6 + breatheSway;
-    skel.armR.rotation.y = -0.2;
-    skel.armR.rotation.z = -0.1;
-
-    skel.armL.rotation.x = 0.85 - aimPitch * 0.6 + breatheSway;
+    const pump = Math.sin(t) * 0.12 * moveBlend;
+    skel.armR.rotation.x = 0.65 - aimPitch * 0.6 + breatheSway - pump + 0.22 * kick;
+    skel.armR.rotation.y = -0.2 + 0.04 * kick;
+    skel.armR.rotation.z = -0.1 - skel.lean.y * 0.2;
+    skel.armL.rotation.x = 0.85 - aimPitch * 0.6 + breatheSway + pump * 0.6 + 0.18 * kick;
     skel.armL.rotation.y = 0.45;
-    skel.armL.rotation.z = 0.2;
+    skel.armL.rotation.z = 0.2 - skel.lean.y * 0.2;
+    skel.forearmR.rotation.x = 0.75 + pump * 0.5 + 0.15 * kick;
+    skel.forearmR.rotation.y = 0.3;
+    skel.forearmL.rotation.x = 0.9 - pump * 0.4 + 0.1 * kick;
+    skel.forearmL.rotation.y = -0.2;
+
+    // 7. Weapon prop: muzzle climbs with each shot and settles back
+    skel.weaponProp.rotation.x = -0.35 - 0.3 * kick;
+    skel.weaponProp.rotation.z = 0.05 * kick;
+    skel.weaponProp.position.z = 0.16 + 0.03 * kick;
   }
 }
