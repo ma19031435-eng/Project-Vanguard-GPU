@@ -28,6 +28,9 @@ interface SettingsModalProps {
   onShowDamageNumbersChange?: (v: boolean) => void;
   touchMode?: 'auto' | 'on' | 'off';
   onTouchModeChange?: (m: 'auto' | 'on' | 'off') => void;
+  presetSource?: 'auto' | 'manual';
+  onAutoPreset?: () => void;
+  hardware?: { preset: GraphicsPreset; score: number; gpu: string; cores: number; memoryGb: number | null; isMobile: boolean; reasons: string[] };
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -49,7 +52,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onShowDamageNumbersChange,
   touchMode = 'auto',
   onTouchModeChange,
-  onBotDifficultyChange
+  onBotDifficultyChange,
+  presetSource = 'manual',
+  onAutoPreset,
+  hardware,
 }) => {
   if (!isOpen) return null;
 
@@ -109,9 +115,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Graphics Quality Management Engine Presets */}
         <div className="mb-6">
-          <div className="flex items-center gap-2 text-sm font-bold text-white mb-3">
-            <Monitor className="w-4 h-4 text-cyan-400" /> GRAPHICS QUALITY ENGINE (5 PRESETS)
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 text-sm font-bold text-white">
+              <Monitor className="w-4 h-4 text-cyan-400" /> GRAPHICS QUALITY
+            </div>
+            <button
+              onClick={onAutoPreset}
+              className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition ${presetSource === 'auto' ? 'bg-emerald-950/70 border-emerald-400 text-emerald-200' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'}`}
+              title="Let the hardware profiler and runtime governor manage quality"
+            >
+              {presetSource === 'auto' ? '● AUTO (ACTIVE)' : 'USE AUTO'}
+            </button>
           </div>
+          {hardware && (
+            <div className="mb-3 p-2.5 rounded-lg bg-black/40 border border-zinc-800 text-[11px] text-zinc-400">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-zinc-200 font-semibold truncate max-w-[60%]" title={hardware.gpu}>{hardware.gpu}</span>
+                <span>{hardware.cores} threads</span>
+                {hardware.memoryGb !== null && <span>{hardware.memoryGb} GB</span>}
+                {hardware.isMobile && <span>mobile</span>}
+                <span className="ml-auto text-cyan-300 font-bold">Score {hardware.score}/100 → {hardware.preset.toUpperCase()}</span>
+              </div>
+              {hardware.reasons.length > 0 && <div className="mt-1 text-zinc-500">{hardware.reasons.join(' · ')}</div>}
+              <div className="mt-1 text-zinc-500">Auto mode also scales render resolution live and steps the preset down if the frame rate can't hold.</div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {(Object.keys(GRAPHICS_PRESETS) as GraphicsPreset[]).map((p) => {

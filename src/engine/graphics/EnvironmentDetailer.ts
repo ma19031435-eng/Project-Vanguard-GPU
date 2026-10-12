@@ -16,6 +16,8 @@ type Vec3 = [number, number, number];
 
 export class EnvironmentDetailer {
   private scene: THREE.Scene;
+  /** Everything the detailer creates lives here so presets can toggle it. */
+  public readonly root: THREE.Group = new THREE.Group();
   private boxes: BoundingBox3D[];
   private rng: () => number;
   /** Static meshes queued for batching, grouped by material. */
@@ -44,6 +46,8 @@ export class EnvironmentDetailer {
 
   constructor(scene: THREE.Scene, collisionBoxes: BoundingBox3D[], seed = 1337) {
     this.scene = scene;
+    this.root.name = 'env-props';
+    this.scene.add(this.root);
     this.boxes = collisionBoxes;
     let s = seed;
     this.rng = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
@@ -84,7 +88,7 @@ export class EnvironmentDetailer {
       mesh.castShadow = batch.cast;
       mesh.receiveShadow = batch.receive;
       mesh.matrixAutoUpdate = false;
-      this.scene.add(mesh);
+      this.root.add(mesh);
       this.drawCallsSaved += batch.geos.length - 1;
     });
     this.batches.clear();
@@ -131,12 +135,12 @@ export class EnvironmentDetailer {
       const target = (l as THREE.SpotLight).target;
       const wp = new THREE.Vector3();
       l.getWorldPosition(wp);
-      this.scene.add(l);
+      this.root.add(l);
       l.position.copy(wp);
       if (target) {
         const tp = new THREE.Vector3();
         target.getWorldPosition(tp);
-        this.scene.add(target);
+        this.root.add(target);
         target.position.copy(tp);
       }
     });
@@ -179,7 +183,7 @@ export class EnvironmentDetailer {
     const dunes = new THREE.Mesh(duneGeo, this.mat.sand);
     dunes.rotation.x = -Math.PI / 2;
     dunes.receiveShadow = true;
-    this.scene.add(dunes);
+    this.root.add(dunes);
 
     // Distant mountain ring
     const ring = new THREE.Group();
@@ -200,7 +204,7 @@ export class EnvironmentDetailer {
       m.rotation.y = this.rng() * Math.PI;
       ring.add(m);
     }
-    this.scene.add(ring);
+    this.root.add(ring);
 
   }
 
@@ -828,7 +832,7 @@ export class EnvironmentDetailer {
       m.rotation.z = rot;
       m.position.set(x, 0.012, z);
       m.receiveShadow = true;
-      this.scene.add(m);
+      this.root.add(m);
     };
 
     for (let i = 0; i < 10; i++) place(oil, (this.rng() - 0.5) * 80, (this.rng() - 0.5) * 80, 2 + this.rng() * 3, this.rng() * 6);
@@ -862,11 +866,11 @@ export class EnvironmentDetailer {
       m.position.set(x, y, z);
       m.rotation.y = rotY;
       m.castShadow = false;
-      this.scene.add(m);
+      this.root.add(m);
       const frame = new THREE.Mesh(this.rbox(size + 0.12, size + 0.12, 0.06, 0.02), this.mat.steel);
       frame.position.copy(m.position).add(new THREE.Vector3(Math.sin(rotY) * -0.04, 0, Math.cos(rotY) * -0.04));
       frame.rotation.y = rotY;
-      this.scene.add(frame);
+      this.root.add(frame);
     };
     put(danger, 0, 3.6, -49.3, 0, 2.2);
     put(sector, 0, 3.6, 49.3, Math.PI, 2.2);

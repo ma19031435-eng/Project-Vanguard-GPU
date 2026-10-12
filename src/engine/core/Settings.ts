@@ -19,6 +19,8 @@ export interface PlayerSettings {
   showDamageNumbers: boolean;
   cameraShake: number; // 0..1 multiplier
   touchMode: 'auto' | 'on' | 'off';
+  /** 'auto' = hardware profiler + runtime governor pick the preset; 'manual' = user choice is sacred. */
+  presetSource: 'auto' | 'manual';
 }
 
 const STORAGE_KEY = 'vanguard.settings.v1';
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: PlayerSettings = {
   showDamageNumbers: true,
   cameraShake: 1.0,
   touchMode: 'auto',
+  presetSource: 'auto',
 };
 
 const PRESETS: GraphicsPreset[] = ['low', 'medium', 'high', 'ultra', 'overdrive'];
@@ -57,6 +60,7 @@ export function sanitizeSettings(raw: unknown): PlayerSettings {
     showDamageNumbers: typeof r.showDamageNumbers === 'boolean' ? r.showDamageNumbers : DEFAULT_SETTINGS.showDamageNumbers,
     cameraShake: num(r.cameraShake, DEFAULT_SETTINGS.cameraShake, 0, 1),
     touchMode: r.touchMode === 'on' || r.touchMode === 'off' ? r.touchMode : 'auto',
+    presetSource: r.presetSource === 'manual' ? 'manual' : 'auto',
   };
 }
 

@@ -79,6 +79,7 @@ interface TacticalHUDProps {
   kills?: number;
   deaths?: number;
   targetKills?: number;
+  presetAuto?: boolean;
 }
 
 export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }> = ({
@@ -131,6 +132,7 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
   kills,
   deaths,
   targetKills = 10,
+  presetAuto = false,
 }) => {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -288,7 +290,7 @@ export const TacticalHUD: React.FC<TacticalHUDProps & { currentSpeed?: number }>
           <span className="text-white/25">·</span>
           <span>{allPlayers.length > 1 ? `${allPlayers[0]?.ping || 18} ms` : 'HOST'}</span>
           <span className="text-white/25">·</span>
-          <span className="uppercase">{preset}</span>
+          <span className="uppercase">{preset}{presetAuto ? " · auto" : ""}</span>
           {!isWebGPU && <span className="text-amber-300/80">· WebGL</span>}
         </div>
         {killFeed.slice(-6).map((kf) => (

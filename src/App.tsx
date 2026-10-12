@@ -23,6 +23,7 @@ import { SentinelAntiCheat } from './engine/anticheat/SentinelAntiCheat.ts';
 import { MainLobby, PauseOverlay, SessionMode } from './components/Lobby/MainLobby.tsx';
 import { Trophy } from 'lucide-react';
 import { loadSettings, saveSettings } from './engine/core/Settings.ts';
+import { profileHardware, AdaptiveQuality, presetAt, presetIndex, HardwareProfile } from './engine/core/HardwareProfiler.ts';
 import { MobileControls } from './components/HUD/MobileControls.tsx';
 
 /** Touch-first device heuristic; refined at runtime by the first real touch/mouse event and overridable with ?mobile=1|0. */
@@ -38,6 +39,8 @@ const detectTouchDevice = (): boolean => {
 };
 
 const SAVED = loadSettings();
+const HW: HardwareProfile = typeof window !== 'undefined' ? profileHardware() : { preset: 'medium', score: 50, gpu: 'n/a', vendor: 'n/a', cores: 4, memoryGb: null, isMobile: false, pixels: 0, webgpu: false, reasons: [] };
+console.info('[Vanguard] Hardware profile:', HW);
 
 const ARENA_PLAYLIST_COUNT = 6;
 
@@ -151,7 +154,12 @@ export default function App() {
   const [frameTimeMs, setFrameTimeMs] = useState(16.6);
   const [latencyMs, setLatencyMs] = useState(0.04);
   const [activeParticles, setActiveParticles] = useState(150000);
-  const [currentPreset, setCurrentPreset] = useState<GraphicsPreset>(SAVED.preset);
+  const [presetSource, setPresetSource] = useState<'auto' | 'manual'>(SAVED.presetSource);
+  const presetSourceRef = useRef(SAVED.presetSource);
+  presetSourceRef.current = presetSource;
+  const [currentPreset, setCurrentPreset] = useState<GraphicsPreset>(SAVED.presetSource === 'manual' ? SAVED.preset : HW.preset);
+  const currentPresetRef = useRef<GraphicsPreset>(SAVED.presetSource === 'manual' ? SAVED.preset : HW.preset);
+  currentPresetRef.current = currentPreset;
   const [isWebGPU, setIsWebGPU] = useState(false);
   const webGPUCapable = typeof navigator !== 'undefined' && 'gpu' in navigator;
   const [mouseSens, setMouseSens] = useState(SAVED.mouseSens);
@@ -189,7 +197,7 @@ export default function App() {
   }, [fov]);
 
   // Persist settings whenever they change (debounced inside saveSettings)
-  useEffect(() => { saveSettings({ mouseSens, fov, masterVol, preset: currentPreset, botDifficulty, cameraShake, showDamageNumbers, touchMode }); }, [mouseSens, fov, masterVol, currentPreset, botDifficulty, cameraShake, showDamageNumbers, touchMode]);
+  useEffect(() => { saveSettings({ mouseSens, fov, masterVol, preset: currentPreset, presetSource, botDifficulty, cameraShake, showDamageNumbers, touchMode }); }, [mouseSens, fov, masterVol, currentPreset, presetSource, botDifficulty, cameraShake, showDamageNumbers, touchMode]);
 
   // Master Engine Object Reference
   const engineRef = useRef<{
@@ -231,6 +239,9 @@ export default function App() {
     shakeAmp: number;
     targetFov: number;
     touchMove: { x: number; y: number };
+    adaptive: AdaptiveQuality;
+    presetPixelRatio: number;
+    appliedPixelRatio: number;
     touchLook: { dx: number; dy: number };
     shakeTime: number;
     landingPunchY: number;
@@ -701,6 +712,9 @@ export default function App() {
       shakeAmp: 0,
       targetFov: fov,
       touchMove: { x: 0, y: 0 },
+      adaptive: new AdaptiveQuality(performance.now(), HW.isMobile),
+      presetPixelRatio: renderer.getPixelRatio(),
+      appliedPixelRatio: renderer.getPixelRatio(),
       touchLook: { dx: 0, dy: 0 },
       shakeTime: 0,
       landingPunchY: 0,
@@ -731,6 +745,7 @@ export default function App() {
     let animationFrameId: number;
     let lastTime = performance.now();
     let lastStatsPush = 0;
+    let lastHudPush = 0;
 
     const renderLoop = (time: number) => {
       animationFrameId = requestAnimationFrame(renderLoop);
@@ -743,6 +758,25 @@ export default function App() {
       if (!engine) return;
 
       const { fps: curFps, frameTimeMs: curDelta } = engine.qualityManager.recordFrame(time);
+
+      // Runtime quality governor: dynamic resolution every frame, preset steps only in auto mode
+      {
+        const step = engine.adaptive.update(time, rawDt * 1000, presetSourceRef.current === 'auto', currentPresetRef.current);
+        const wantPR = engine.presetPixelRatio * engine.adaptive.resolutionScale;
+        if (Math.abs(wantPR - engine.appliedPixelRatio) > 0.02) {
+          engine.appliedPixelRatio = wantPR;
+          renderer.setPixelRatio(wantPR);
+          renderer.setSize(window.innerWidth, window.innerHeight);
+          engine.pipeline.setSize(window.innerWidth, window.innerHeight);
+        }
+        if (step !== 0) {
+          const next = presetAt(presetIndex(currentPresetRef.current) + step);
+          console.info(`[Vanguard] Auto quality: ${currentPresetRef.current} → ${next} (avg frame ${curDelta.toFixed(1)} ms)`);
+          handleSelectPresetRef.current(next, 'auto');
+        }
+      }
+      const hudSync = time - lastHudPush > 50; // HUD state at 20 Hz — React never re-renders per frame
+      if (hudSync) lastHudPush = time;
       // Stats UI at 4 Hz — the HUD doesn't need a React re-render every frame for a counter
       if (time - lastStatsPush > 250) {
         lastStatsPush = time;
@@ -756,7 +790,7 @@ export default function App() {
         setFrameTimeMs(curDelta);
       }
       const wasmStatus = engine.wasmCore.getStatus();
-      setLatencyMs(wasmStatus.latencyMs);
+      if (hudSync) setLatencyMs(wasmStatus.latencyMs);
 
       // Rotate hazard lights
       const tSec = time * 0.001;
@@ -889,7 +923,7 @@ export default function App() {
       }
 
       const horizSpeed = Math.hypot(nextState.velocity[0], nextState.velocity[2]);
-      setCurrentSpeed(horizSpeed);
+      if (hudSync) setCurrentSpeed(horizSpeed);
 
       if (nextState.onGround && horizSpeed > 1.2 && !engine.isDead) {
         engine.footstepSoundTimer -= dt;
@@ -946,11 +980,13 @@ export default function App() {
       engine.mouseDeltaX = 0;
       engine.mouseDeltaY = 0;
 
-      setAmmo(engine.weaponSystem.ammoInMag[engine.weaponSystem.currentWeapon]);
-      setReserveAmmo(engine.weaponSystem.reserveAmmo[engine.weaponSystem.currentWeapon]);
-      setIsReloading(engine.weaponSystem.isReloading);
-      setReloadProgress(engine.weaponSystem.reloadProgress);
-      setSpreadBloom(engine.weaponSystem.spreadCurrent);
+      if (hudSync) {
+        setAmmo(engine.weaponSystem.ammoInMag[engine.weaponSystem.currentWeapon]);
+        setReserveAmmo(engine.weaponSystem.reserveAmmo[engine.weaponSystem.currentWeapon]);
+        setIsReloading(engine.weaponSystem.isReloading);
+        setReloadProgress(engine.weaponSystem.reloadProgress);
+        setSpreadBloom(engine.weaponSystem.spreadCurrent);
+      }
 
       // 16. Update Insanely Smart Bots Simulation
       engine.botSim.update(
@@ -1050,7 +1086,7 @@ export default function App() {
           ...(engine.botSim.enabled ? engine.botSim.bots.map(b => b.state) : [])
         ];
 
-        setAllPlayers(combatants);
+        if (hudSync) setAllPlayers(combatants);
         engine.p2pNet.currentTick++;
         engine.p2pNet.broadcastSnapshot({
           tick: engine.p2pNet.currentTick,
@@ -1074,7 +1110,7 @@ export default function App() {
         const interp = engine.p2pNet.updateEntityInterpolation();
         const list: PlayerNetState[] = [];
         interp.forEach(p => list.push(p));
-        setAllPlayers(list);
+        if (hudSync) setAllPlayers(list);
 
         // Light reconciliation: snap if the host disagrees with our predicted position by a lot.
         const self = interp.get(engine.p2pNet.localPeerId);
@@ -1091,8 +1127,10 @@ export default function App() {
       if (usePost && engine.usePost) engine.pipeline.render(dt, time);
       else renderer.render(scene, camera);
 
-      setPlayerPos([camera.position.x, camera.position.y, camera.position.z]);
-      setPlayerYaw(engine.yaw);
+      if (hudSync) {
+        setPlayerPos([camera.position.x, camera.position.y, camera.position.z]);
+        setPlayerYaw(engine.yaw);
+      }
     };
 
     animationFrameId = requestAnimationFrame(renderLoop);
@@ -1686,7 +1724,19 @@ export default function App() {
       sunLight.shadow.map = null;
     }
     sunLight.shadow.radius = conf.shadowSoftness === 'none' ? 1 : conf.shadowSoftness === 'pcf' ? 2 : 4;
-    sunLight.castShadow = true;
+    const tierIdx = presetIndex(preset);
+    sunLight.castShadow = tierIdx >= 1; // Low: no shadow pass at all
+    renderer.shadowMap.enabled = tierIdx >= 1;
+
+    // Decorative prop layer is the biggest draw-call cost — drop it on Low, keep on everything else
+    const envRoot = scene.getObjectByName('env-props');
+    if (envRoot) envRoot.visible = tierIdx >= 1;
+
+    // Remember the preset's native pixel ratio; the runtime governor scales from here
+    engine.presetPixelRatio = renderer.getPixelRatio();
+    engine.appliedPixelRatio = engine.presetPixelRatio;
+    engine.adaptive.resolutionScale = 1.0;
+    engine.adaptive.reset(performance.now());
 
     // Post-processing stack: low = raw render, medium = AA + grade, high+ = bloom too
     const tier = ['low', 'medium', 'high', 'ultra', 'overdrive'].indexOf(preset);
@@ -1721,11 +1771,15 @@ export default function App() {
     return conf;
   }, []);
 
-  const handleSelectPreset = (preset: GraphicsPreset) => {
+  const handleSelectPreset = (preset: GraphicsPreset, source: 'auto' | 'manual' = 'manual') => {
+    setPresetSource(source);
     setCurrentPreset(preset);
     const conf = applyPresetToEngine(preset);
     if (conf) setActiveParticles(conf.maxComputeParticles);
   };
+  const handleSelectPresetRef = useRef(handleSelectPreset);
+  handleSelectPresetRef.current = handleSelectPreset;
+  const handleAutoPreset = () => handleSelectPreset(HW.preset, 'auto');
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden hud-font select-none">
@@ -1825,6 +1879,7 @@ export default function App() {
         damageIndicators={damageIndicators}
         kills={playerKills}
         deaths={playerDeaths}
+        presetAuto={presetSource === 'auto'}
         preset={currentPreset}
         isWebGPU={isWebGPU}
         isHost={isHostSession}
@@ -1935,6 +1990,9 @@ export default function App() {
         onShowDamageNumbersChange={setShowDamageNumbers}
         touchMode={touchMode}
         onTouchModeChange={setTouchMode}
+        presetSource={presetSource}
+        onAutoPreset={handleAutoPreset}
+        hardware={HW}
         botDifficulty={botDifficulty}
         onBotDifficultyChange={handleSetBotDifficulty}
       />
