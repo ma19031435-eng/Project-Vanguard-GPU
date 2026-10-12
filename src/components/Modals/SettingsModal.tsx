@@ -54,7 +54,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 font-mono select-none">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hud-font select-none">
       <div className="bg-zinc-950 border border-cyan-500/40 rounded-2xl w-full max-w-xl p-6 shadow-2xl text-zinc-200">
         <div className="flex justify-between items-center pb-3 border-b border-zinc-800 mb-6">
           <div className="flex items-center gap-2 text-cyan-400 font-bold text-lg">

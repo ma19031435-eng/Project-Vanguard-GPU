@@ -8,7 +8,8 @@ html, body, #root {
   overflow: hidden;
   background-color: #050608;
   user-select: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: "Inter", "SF Pro Display", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Touch devices: no pull-to-refresh, pinch zoom, or long-press callouts over the game canvas */
@@ -20,3 +21,20 @@ html, body, #root {
 canvas {
   touch-action: none;
 }
+
+/* ---- HUD typography & micro-animations ---- */
+.hud-font {
+  font-family: "Inter", "SF Pro Display", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+  letter-spacing: 0.01em;
+}
+@keyframes hud-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: hud-fade-in 180ms ease-out both; }
+@keyframes hitmarker-pop {
+  0% { transform: translate(-50%, -50%) scale(1.5); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+}
+.hitmarker-pop { animation: hitmarker-pop 140ms ease-out both; }

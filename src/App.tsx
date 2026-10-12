@@ -1728,7 +1728,7 @@ export default function App() {
   };
 
   return (
-    <div className="relative w-screen h-screen bg-black overflow-hidden font-mono select-none">
+    <div className="relative w-screen h-screen bg-black overflow-hidden hud-font select-none">
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
@@ -1736,7 +1736,7 @@ export default function App() {
       />
 
       {contextLost && (
-        <div className="absolute inset-0 z-[90] bg-black/85 flex items-center justify-center text-center font-mono">
+        <div className="absolute inset-0 z-[90] bg-black/85 flex items-center justify-center text-center hud-font">
           <div className="border border-amber-500/50 bg-black/80 rounded-xl p-6 max-w-md">
             <div className="text-[10px] tracking-[0.35em] text-amber-400 mb-2">GPU DEVICE LOST</div>
             <div className="text-white font-black text-xl mb-2">Graphics context was reset</div>
@@ -1823,6 +1823,8 @@ export default function App() {
         latencyMs={latencyMs}
         activeParticles={activeParticles}
         damageIndicators={damageIndicators}
+        kills={playerKills}
+        deaths={playerDeaths}
         preset={currentPreset}
         isWebGPU={isWebGPU}
         isHost={isHostSession}
@@ -1864,7 +1866,7 @@ export default function App() {
       />
 
       {roundWinner && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 font-mono select-none">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 hud-font select-none">
           <div className="bg-zinc-950 border-2 border-amber-500 rounded-2xl p-8 max-w-md w-full text-center shadow-[0_0_50px_rgba(245,158,11,0.5)]">
             <Trophy className="w-16 h-16 text-amber-400 mx-auto mb-3 animate-pulse" />
             <h2 className="text-3xl font-black text-white tracking-widest mb-1">MATCH VICTORY!</h2>

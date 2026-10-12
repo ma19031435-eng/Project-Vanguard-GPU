@@ -41,7 +41,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const triggerUpdate = () => setRefreshKey(k => k + 1);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 font-mono select-none">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 hud-font select-none">
       <div className="bg-zinc-950 border-2 border-amber-500/50 rounded-2xl w-full max-w-3xl p-6 shadow-[0_0_50px_rgba(245,158,11,0.25)] text-zinc-200 flex flex-col max-h-[85vh]">
         {/* Header */}
         <div className="flex justify-between items-center pb-4 border-b border-zinc-800 shrink-0">

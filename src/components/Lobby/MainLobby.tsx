@@ -85,7 +85,7 @@ export const MainLobby: React.FC<MainLobbyProps> = ({
   const kd = deaths > 0 ? (kills / deaths).toFixed(2) : kills.toFixed(2);
 
   return (
-    <div className="absolute inset-0 z-40 font-mono select-none text-zinc-200 overflow-hidden">
+    <div className="absolute inset-0 z-40 hud-font select-none text-zinc-200 overflow-hidden">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(14,116,144,0.35),_transparent_55%),radial-gradient(ellipse_at_bottom_right,_rgba(217,119,6,0.25),_transparent_50%)] bg-[#05070c]/92 backdrop-blur-md" />
       <div className="absolute inset-0 opacity-[0.07] bg-[linear-gradient(rgba(255,255,255,.4)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.4)_1px,transparent_1px)] bg-[size:48px_48px]" />
@@ -256,7 +256,7 @@ export const PauseOverlay: React.FC<{
   onOpenSettings: () => void;
   onOpenLobby: () => void;
 }> = ({ mode, onResume, onReturnToLobby, onOpenSettings, onOpenLobby }) => (
-  <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6 font-mono select-none">
+  <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6 hud-font select-none">
     <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#090d15]/95 p-6 shadow-[0_0_60px_rgba(0,0,0,0.6)]">
       <div className="text-[10px] text-zinc-500 tracking-widest">SESSION PAUSED</div>
       <div className="text-xl font-black text-white mt-1">

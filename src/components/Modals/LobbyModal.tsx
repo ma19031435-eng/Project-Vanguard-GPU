@@ -38,7 +38,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ isOpen, onClose, roomId,
   const statusColor = networkStatus === 'connected' ? 'text-emerald-400' : networkStatus === 'connecting' ? 'text-amber-400' : networkStatus === 'idle' ? 'text-zinc-500' : 'text-red-400';
   const quickPlay = () => { setSearching(true); onHostNewRoom(); setTimeout(() => setSearching(false), 1800); };
 
-  return <div className="fixed inset-0 z-50 bg-[#05070c]/95 backdrop-blur-xl flex items-center justify-center p-3 font-mono select-none">
+  return <div className="fixed inset-0 z-50 bg-[#05070c]/95 backdrop-blur-xl flex items-center justify-center p-3 hud-font select-none">
     <div className="bg-[#090d15] border border-cyan-400/30 rounded-2xl w-full max-w-5xl max-h-[94vh] overflow-hidden shadow-[0_0_80px_rgba(6,182,212,.16)] text-zinc-200">
       <header className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-gradient-to-r from-cyan-950/40 to-transparent">
         <div><div className="flex items-center gap-2 text-cyan-300 font-black text-xl tracking-widest"><Globe className="w-5 h-5"/> VANGUARD NETWORK</div><div className="text-[10px] text-zinc-500 mt-1">P2P PREVIEW • DEDICATED MATCHMAKING INFRASTRUCTURE COMING LATER</div></div>
