@@ -396,7 +396,7 @@ export default function App() {
 
     // 1. Real Earth Sunny Atmosphere (Outpost Mirage under bright blue skies)
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xd9cdb8, 0.0032); // Warm desert haze (sky dome supplies the background)
+    scene.fog = new THREE.FogExp2(0xb8ab98, 0.0028); // Warm desert haze (sky dome supplies the background)
 
     const camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.05, 3000);
     camera.rotation.order = 'YXZ'; // Strictly 'YXZ' to prevent any camera / crosshair roll tilt!
@@ -412,7 +412,7 @@ export default function App() {
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.5; // Sky dome is HDR; keep exposure conservative
+    renderer.toneMappingExposure = 0.42; // Sky dome is HDR; keep exposure conservative
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 

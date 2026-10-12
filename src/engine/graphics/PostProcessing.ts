@@ -96,13 +96,13 @@ export class CinematicPipeline {
     this.sky = new Sky();
     this.sky.scale.setScalar(4500);
     const u = this.sky.material.uniforms;
-    u.turbidity.value = 8.0;
-    u.rayleigh.value = 2.2;
-    u.mieCoefficient.value = 0.004;
-    u.mieDirectionalG.value = 0.8;
+    u.turbidity.value = 10.0;
+    u.rayleigh.value = 1.6;
+    u.mieCoefficient.value = 0.0015; // small sun halo — keeps the sky near the sun readable
+    u.mieDirectionalG.value = 0.7;
     scene.add(this.sky);
 
-    const elevation = THREE.MathUtils.degToRad(38);
+    const elevation = THREE.MathUtils.degToRad(58); // high sun: out of the eye line
     const azimuth = THREE.MathUtils.degToRad(145);
     this.sunDirection.setFromSphericalCoords(1, Math.PI / 2 - elevation, azimuth);
     u.sunPosition.value.copy(this.sunDirection);
@@ -111,11 +111,10 @@ export class CinematicPipeline {
     // Lens flare on the sun
     const flareTex = CinematicPipeline.makeFlareTexture();
     const flare = new Lensflare();
-    flare.addElement(new LensflareElement(flareTex, 420, 0, new THREE.Color(0xfff3d6)));
-    flare.addElement(new LensflareElement(flareTex, 90, 0.35, new THREE.Color(0xffd28a)));
-    flare.addElement(new LensflareElement(flareTex, 140, 0.6, new THREE.Color(0x9ad6ff)));
-    flare.addElement(new LensflareElement(flareTex, 60, 0.85, new THREE.Color(0xffb36b)));
-    flare.addElement(new LensflareElement(flareTex, 200, 1.1, new THREE.Color(0xa0e9ff)));
+    flare.addElement(new LensflareElement(flareTex, 160, 0, new THREE.Color(0x8a7a60)));
+    flare.addElement(new LensflareElement(flareTex, 50, 0.35, new THREE.Color(0x5a4a30)));
+    flare.addElement(new LensflareElement(flareTex, 70, 0.6, new THREE.Color(0x30505a)));
+    flare.addElement(new LensflareElement(flareTex, 40, 0.85, new THREE.Color(0x5a4028)));
     sunLight.add(flare);
 
     // Environment reflections from the sky
@@ -131,7 +130,7 @@ export class CinematicPipeline {
     this.composer.addPass(new RenderPass(scene, camera));
 
     // Bloom only on genuinely hot pixels (emissives, sun) — threshold sits above the HDR sky.
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.25, 1.8);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.18, 0.2, 2.2);
     this.composer.addPass(this.bloom);
 
     // Tone mapping + sRGB first, then grade on display-referred colour.
